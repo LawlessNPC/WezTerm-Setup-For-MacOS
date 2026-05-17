@@ -1,0 +1,166 @@
+#!/usr/bin/env node
+
+import { spawn } from "node:child_process";
+import { URL } from "node:url";
+
+const REAL_SUMMARIZE = process.env.SUMMARIZE_REAL_BIN || "/usr/local/bin/summarize";
+const GEMINI_ENV_KEYS = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+];
+
+function valueRequestsGemini(value) {
+  const normalized = value.trim().toLowerCase();
+  return normalized.includes("gemini") || normalized.startsWith("google/");
+}
+
+function argsRequestGemini(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    const normalized = arg.toLowerCase();
+
+    if (normalized === "--model" || normalized === "-m" || normalized === "--cli") {
+      if (valueRequestsGemini(args[index + 1] ?? "")) return true;
+      continue;
+    }
+
+    if (normalized.startsWith("--model=") || normalized.startsWith("--cli=")) {
+      if (valueRequestsGemini(arg.slice(arg.indexOf("=") + 1))) return true;
+    }
+  }
+
+  return false;
+}
+
+function envForSummarize() {
+  const env = { ...process.env };
+  for (const key of GEMINI_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+
+function isHackerNewsItemUrl(value) {
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname === "news.ycombinator.com" &&
+      url.pathname === "/item" &&
+      url.searchParams.has("id")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hackerNewsItemId(value) {
+  try {
+    const url = new URL(value);
+    return url.searchParams.get("id");
+  } catch {
+    return null;
+  }
+}
+
+function decodeHtml(value) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#x27;", "'")
+    .replaceAll("&#39;", "'");
+}
+
+function firstStoryLink(html) {
+  const titleline = html.match(/<span class="titleline">([\s\S]*?)<\/span>/i);
+  const section = titleline?.[1] ?? html;
+  const href = section.match(/<a\s+href="([^"]+)"/i)?.[1];
+  if (!href) return null;
+
+  const decoded = decodeHtml(href);
+  try {
+    return new URL(decoded, "https://news.ycombinator.com/").toString();
+  } catch {
+    return null;
+  }
+}
+
+async function resolveHackerNewsItem(url) {
+  const id = hackerNewsItemId(url);
+  if (id) {
+    const apiUrl = `https://hacker-news.firebaseio.com/v0/item/${encodeURIComponent(id)}.json`;
+    const apiResponse = await fetch(apiUrl, {
+      redirect: "follow",
+      headers: { "user-agent": "summarize-hn-resolver/1.0" },
+    });
+
+    if (apiResponse.ok) {
+      const item = await apiResponse.json();
+      if (item && typeof item.url === "string" && item.url.trim()) {
+        return item.url.trim();
+      }
+    }
+  }
+
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: { "user-agent": "summarize-hn-resolver/1.0" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} while resolving Hacker News item`);
+  }
+
+  return firstStoryLink(await response.text());
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const hackerNewsInputIndex = args.findIndex(isHackerNewsItemUrl);
+
+  if (argsRequestGemini(args) || valueRequestsGemini(process.env.SUMMARIZE_MODEL ?? "")) {
+    process.stderr.write("summarize: Gemini is disabled on this machine. Use Claude or Codex.\n");
+    process.exit(2);
+  }
+
+  if (hackerNewsInputIndex !== -1) {
+    try {
+      const resolved = await resolveHackerNewsItem(args[hackerNewsInputIndex]);
+      if (resolved && !resolved.includes("news.ycombinator.com/item?")) {
+        args[hackerNewsInputIndex] = resolved;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`summarize: could not resolve HN story link: ${message}\n`);
+    }
+  }
+
+  const child = spawn(REAL_SUMMARIZE, args, { stdio: "inherit", env: envForSummarize() });
+  child.on("error", (error) => {
+    if (error && error.code === "ENOENT") {
+      process.stderr.write(
+        `summarize: real summarize CLI not found at ${REAL_SUMMARIZE}. ` +
+          "Install @steipete/summarize or set SUMMARIZE_REAL_BIN.\n",
+      );
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`summarize: ${message}\n`);
+    }
+    process.exit(1);
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code ?? 1);
+    }
+  });
+}
+
+main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`summarize: ${message}\n`);
+  process.exit(1);
+});

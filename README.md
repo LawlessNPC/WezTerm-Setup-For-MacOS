@@ -30,7 +30,8 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A visible WezTerm `+` tab button: left-click opens a new tab, right-click renames the active tab.
 - A custom tmux status line with current mode, repo/directory context, disk space, load, window count, pane count, date, and 12-hour time.
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
-- Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list.
+- Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
+- A guarded `summarize` wrapper for an existing `@steipete/summarize` install. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -106,6 +107,19 @@ The WezTerm tab bar always stays visible and includes the `+` tab button.
 | Right-click `+` | Prompt to rename the active WezTerm tab |
 | Submit a blank tab name | Reset the active tab title |
 
+## Summarize Guard
+
+The `summarize` wrapper is installed to `~/.local/bin/summarize`, which should appear before `/usr/local/bin` in your `PATH`.
+
+It keeps the upstream `@steipete/summarize` CLI available while adding local policy:
+
+- Hacker News item URLs such as `https://news.ycombinator.com/item?id=...` are resolved to the linked story before summarizing.
+- Gemini CLI/API usage is refused, even if a command explicitly passes a Gemini model.
+- Auto model selection uses only `cli/claude/sonnet` and `cli/codex/gpt-5.2`.
+- The default summary length is `short`, which avoids the upstream CLI returning raw extracted text for shorter pages.
+
+The wrapper expects the real summarize binary at `/usr/local/bin/summarize`. If it lives somewhere else, set `SUMMARIZE_REAL_BIN` to that path.
+
 ## Installed Pieces
 
 Homebrew installs:
@@ -131,6 +145,8 @@ Config installed:
 ~/.tmux/status/load.sh
 ~/.config/newsboat/config
 ~/.config/newsboat/urls
+~/.local/bin/summarize
+~/.summarize/config.json
 ```
 
 tmux plugins are managed by TPM. The installer clones TPM and runs the plugin installer.
@@ -144,6 +160,9 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 |-- newsboat
 |   |-- config
 |   `-- urls
+|-- summarize
+|   |-- config.json
+|   `-- summarize
 |-- tmux
 |   |-- tmux.conf
 |   `-- status
@@ -161,7 +180,7 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 Use this if you want to copy the config files yourself:
 
 ```sh
-mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.tmux/status
+mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.tmux/status ~/.local/bin ~/.summarize
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
 cp wezterm/assets/cyberpunk-red.jpg ~/.config/wezterm/assets/cyberpunk-red.jpg
 cp tmux/tmux.conf ~/.tmux.conf
@@ -169,6 +188,9 @@ cp tmux/status/*.sh ~/.tmux/status/
 chmod +x ~/.tmux/status/*.sh
 cp newsboat/config ~/.config/newsboat/config
 cp newsboat/urls ~/.config/newsboat/urls
+cp summarize/summarize ~/.local/bin/summarize
+chmod +x ~/.local/bin/summarize
+cp summarize/config.json ~/.summarize/config.json
 ```
 
 Install TPM:
@@ -208,6 +230,30 @@ If it is missing:
 
 ```sh
 brew install tmux
+```
+
+### Newsboat says another instance is already running
+
+This setup sets `destroy-unattached on` in tmux. Reload the config in any active tmux session:
+
+```sh
+tmux source-file ~/.tmux.conf
+```
+
+After that, closing a WezTerm tab should destroy its tmux session and stop foreground programs like Newsboat.
+
+### `summarize` tries to use Gemini
+
+The wrapper blocks Gemini at the command level and the config removes Gemini from auto selection. Check that the wrapper is first in `PATH`:
+
+```sh
+which -a summarize
+```
+
+The first result should be:
+
+```text
+~/.local/bin/summarize
 ```
 
 ## Keep This Backup Updated

@@ -20,6 +20,8 @@ mkdir -p "$HOME/.config/wezterm/assets"
 mkdir -p "$HOME/.config/newsboat"
 mkdir -p "$HOME/.tmux/status"
 mkdir -p "$HOME/.tmux/plugins"
+mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/.summarize"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
 cp "$repo_dir/wezterm/assets/cyberpunk-red.jpg" "$HOME/.config/wezterm/assets/cyberpunk-red.jpg"
@@ -30,6 +32,10 @@ chmod +x "$HOME/.tmux/status/"*.sh
 
 cp "$repo_dir/newsboat/config" "$HOME/.config/newsboat/config"
 cp "$repo_dir/newsboat/urls" "$HOME/.config/newsboat/urls"
+
+cp "$repo_dir/summarize/summarize" "$HOME/.local/bin/summarize"
+chmod +x "$HOME/.local/bin/summarize"
+cp "$repo_dir/summarize/config.json" "$HOME/.summarize/config.json"
 
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
   git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
