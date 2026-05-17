@@ -1,0 +1,24 @@
+export EDITOR="micro"
+export VISUAL="micro"
+
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/Library/Python/3.11/bin:$PATH"
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+
+# zsh plugins (cloned into ~/.zsh by install.sh)
+[[ -r ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+[[ -r ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] && source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+eval "$(starship init zsh)"
+
+alias ls="eza --icons=always"
+
+alias cd="z"
+# Added by Antigravity
+export PATH="$HOME/.antigravity/antigravity/bin:$PATH"
+
+# Go binaries (go install)
+export PATH="$HOME/go/bin:$PATH"
+
+# zoxide — keep this initialization at the very end of the file
+eval "$(zoxide init zsh)"

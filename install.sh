@@ -18,10 +18,12 @@ brew bundle --file "$repo_dir/Brewfile"
 
 mkdir -p "$HOME/.config/wezterm/assets"
 mkdir -p "$HOME/.config/newsboat"
+mkdir -p "$HOME/.config/micro"
 mkdir -p "$HOME/.tmux/status"
 mkdir -p "$HOME/.tmux/plugins"
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.summarize"
+mkdir -p "$HOME/.zsh"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
 cp "$repo_dir/wezterm/assets/cyberpunk-red.jpg" "$HOME/.config/wezterm/assets/cyberpunk-red.jpg"
@@ -36,6 +38,10 @@ cp "$repo_dir/newsboat/urls" "$HOME/.config/newsboat/urls"
 cp "$repo_dir/summarize/summarize" "$HOME/.local/bin/summarize"
 chmod +x "$HOME/.local/bin/summarize"
 cp "$repo_dir/summarize/config.json" "$HOME/.summarize/config.json"
+
+cp "$repo_dir/zsh/zshrc" "$HOME/.zshrc"
+cp "$repo_dir/zsh/starship.toml" "$HOME/.config/starship.toml"
+cp "$repo_dir/micro/bindings.json" "$HOME/.config/micro/bindings.json"
 
 # Put ~/.local/bin ahead of the rest of PATH so the summarize wrapper
 # intercepts the real CLI. Idempotent: the line is appended to ~/.zprofile once.
@@ -64,6 +70,13 @@ if command -v npm >/dev/null 2>&1; then
   fi
 else
   echo "warning: npm not found; skipping @steipete/summarize install." >&2
+fi
+
+if [[ ! -d "$HOME/.zsh/zsh-autosuggestions" ]]; then
+  git clone https://github.com/zsh-users/zsh-autosuggestions "$HOME/.zsh/zsh-autosuggestions"
+fi
+if [[ ! -d "$HOME/.zsh/zsh-syntax-highlighting" ]]; then
+  git clone https://github.com/zsh-users/zsh-syntax-highlighting "$HOME/.zsh/zsh-syntax-highlighting"
 fi
 
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then

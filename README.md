@@ -32,6 +32,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
 - A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
+- A configured zsh shell: a Starship prompt, `eza`-powered `ls`, `zoxide` smart directory jumping, command autosuggestions, and syntax highlighting.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -131,6 +132,9 @@ newsboat
 node
 tmux
 fastfetch
+eza
+starship
+zoxide
 wezterm
 font-victor-mono-nerd-font
 font-symbols-only-nerd-font
@@ -149,11 +153,14 @@ Config installed:
 ~/.config/newsboat/urls
 ~/.local/bin/summarize
 ~/.summarize/config.json
+~/.zshrc
+~/.config/starship.toml
+~/.config/micro/bindings.json
 ```
 
 `install.sh` also appends (never overwrites) to `~/.zprofile`, putting `~/.local/bin` on `PATH` for the `summarize` wrapper.
 
-tmux plugins are managed by TPM. The installer clones TPM and runs the plugin installer.
+tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlighting` are cloned into `~/.zsh/`. The installer handles all of them.
 
 ## Repository Layout
 
@@ -161,6 +168,8 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 .
 |-- Brewfile
 |-- install.sh
+|-- micro
+|   `-- bindings.json
 |-- newsboat
 |   |-- config
 |   `-- urls
@@ -173,10 +182,13 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 |       |-- context.sh
 |       |-- disk.sh
 |       `-- load.sh
-`-- wezterm
-    |-- wezterm.lua
-    `-- assets
-        `-- cyberpunk-red.jpg
+|-- wezterm
+|   |-- wezterm.lua
+|   `-- assets
+|       `-- cyberpunk-red.jpg
+`-- zsh
+    |-- starship.toml
+    `-- zshrc
 ```
 
 ## Manual Install
@@ -184,7 +196,7 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 Use this if you want to copy the config files yourself:
 
 ```sh
-mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.tmux/status ~/.local/bin ~/.summarize
+mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.config/micro ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
 cp wezterm/assets/cyberpunk-red.jpg ~/.config/wezterm/assets/cyberpunk-red.jpg
 cp tmux/tmux.conf ~/.tmux.conf
@@ -195,13 +207,18 @@ cp newsboat/urls ~/.config/newsboat/urls
 cp summarize/summarize ~/.local/bin/summarize
 chmod +x ~/.local/bin/summarize
 cp summarize/config.json ~/.summarize/config.json
+cp zsh/zshrc ~/.zshrc
+cp zsh/starship.toml ~/.config/starship.toml
+cp micro/bindings.json ~/.config/micro/bindings.json
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
 npm install -g @steipete/summarize
 ```
 
-Install TPM:
+Install the shell and tmux plugins:
 
 ```sh
+git clone https://github.com/zsh-users/zsh-autosuggestions ~/.zsh/zsh-autosuggestions
+git clone https://github.com/zsh-users/zsh-syntax-highlighting ~/.zsh/zsh-syntax-highlighting
 git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 ~/.tmux/plugins/tpm/bin/install_plugins
 ```
