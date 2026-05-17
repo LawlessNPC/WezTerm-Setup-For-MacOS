@@ -1,0 +1,43 @@
+# ~/.config/newsboat/urls
+# Format:  <feed-url>  "tag"  ["another tag"]
+# Press 'r' to reload one feed, 'R' to reload all. Delete any line you don't want.
+
+# --- Tech / dev news ----------------------------------------------------
+# Official HN RSS mirrors the ranked homepage more closely than hnrss.org/frontpage.
+https://news.ycombinator.com/rss                  "Tech"
+https://feeds.arstechnica.com/arstechnica/index    "Tech"
+https://www.theverge.com/rss/index.xml             "Tech"
+
+# --- Apple / macOS ------------------------------------------------------
+https://daringfireball.net/feeds/main              "Apple"
+https://9to5mac.com/feed/                          "Apple"
+https://feeds.macrumors.com/MacRumors-All          "Apple"
+
+# --- Programming blogs --------------------------------------------------
+https://lobste.rs/rss                              "Programming"
+https://blog.rust-lang.org/feed.xml                "Programming"
+https://www.swift.org/atom.xml                     "Programming"
+
+# --- World news ---------------------------------------------------------
+https://feeds.bbci.co.uk/news/world/rss.xml        "World"
+https://www.theguardian.com/world/rss              "World"
+https://feeds.npr.org/1004/rss.xml                 "World"
+
+# --- Gaming / video games -----------------------------------------------
+https://www.gameinformer.com/rss.xml               "Gaming"
+https://www.polygon.com/rss/index.xml              "Gaming"
+https://feeds.feedburner.com/ign/games-all         "Gaming"
+https://www.gamespot.com/feeds/news/               "Gaming"
+
+# --- AI -----------------------------------------------------------------
+https://openai.com/news/rss.xml                    "AI"
+https://deepmind.google/blog/rss.xml               "AI"
+https://importai.substack.com/feed                 "AI"
+
+# --- Agile / software practices -----------------------------------------
+https://feed.infoq.com/                            "Agile"
+
+# --- Steam --------------------------------------------------------------
+# Steam has no global news RSS. Options:
+#  - Per-game:  https://store.steampowered.com/feeds/news/app/<APPID>/
+#  - SteamDB:   https://steamdb.info/  (no official feed)

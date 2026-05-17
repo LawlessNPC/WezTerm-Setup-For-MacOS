@@ -17,6 +17,7 @@ fi
 brew bundle --file "$repo_dir/Brewfile"
 
 mkdir -p "$HOME/.config/wezterm/assets"
+mkdir -p "$HOME/.config/newsboat"
 mkdir -p "$HOME/.tmux/status"
 mkdir -p "$HOME/.tmux/plugins"
 
@@ -26,6 +27,9 @@ cp "$repo_dir/wezterm/assets/cyberpunk-red.jpg" "$HOME/.config/wezterm/assets/cy
 cp "$repo_dir/tmux/tmux.conf" "$HOME/.tmux.conf"
 cp "$repo_dir/tmux/status/"*.sh "$HOME/.tmux/status/"
 chmod +x "$HOME/.tmux/status/"*.sh
+
+cp "$repo_dir/newsboat/config" "$HOME/.config/newsboat/config"
+cp "$repo_dir/newsboat/urls" "$HOME/.config/newsboat/urls"
 
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
   git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"

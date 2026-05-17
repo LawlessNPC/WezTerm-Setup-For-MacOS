@@ -30,6 +30,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A visible WezTerm `+` tab button: left-click opens a new tab, right-click renames the active tab.
 - A custom tmux status line with current mode, repo/directory context, disk space, load, window count, pane count, date, and 12-hour time.
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
+- Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -92,7 +93,8 @@ Common bindings:
 | `Ctrl-a m` | Zoom current pane |
 | `Ctrl-a r` | Reload `~/.tmux.conf` |
 | `v` in copy mode | Start selection |
-| `y` in copy mode | Copy selection |
+| `y` in copy mode | Copy selection to the macOS clipboard |
+| Mouse drag | Select and copy straight to the macOS clipboard |
 
 ## WezTerm Tab Controls
 
@@ -111,6 +113,7 @@ Homebrew installs:
 ```text
 git
 micro
+newsboat
 tmux
 wezterm
 font-victor-mono-nerd-font
@@ -126,6 +129,8 @@ Config installed:
 ~/.tmux/status/context.sh
 ~/.tmux/status/disk.sh
 ~/.tmux/status/load.sh
+~/.config/newsboat/config
+~/.config/newsboat/urls
 ```
 
 tmux plugins are managed by TPM. The installer clones TPM and runs the plugin installer.
@@ -136,6 +141,9 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 .
 |-- Brewfile
 |-- install.sh
+|-- newsboat
+|   |-- config
+|   `-- urls
 |-- tmux
 |   |-- tmux.conf
 |   `-- status
@@ -153,12 +161,14 @@ tmux plugins are managed by TPM. The installer clones TPM and runs the plugin in
 Use this if you want to copy the config files yourself:
 
 ```sh
-mkdir -p ~/.config/wezterm/assets ~/.tmux/status
+mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.tmux/status
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
 cp wezterm/assets/cyberpunk-red.jpg ~/.config/wezterm/assets/cyberpunk-red.jpg
 cp tmux/tmux.conf ~/.tmux.conf
 cp tmux/status/*.sh ~/.tmux/status/
 chmod +x ~/.tmux/status/*.sh
+cp newsboat/config ~/.config/newsboat/config
+cp newsboat/urls ~/.config/newsboat/urls
 ```
 
 Install TPM:

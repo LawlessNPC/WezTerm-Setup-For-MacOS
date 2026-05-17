@@ -1,5 +1,6 @@
 brew "git"
 brew "micro"
+brew "newsboat"
 brew "tmux"
 
 cask "wezterm"
