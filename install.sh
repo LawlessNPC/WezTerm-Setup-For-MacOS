@@ -19,6 +19,7 @@ brew bundle --file "$repo_dir/Brewfile"
 mkdir -p "$HOME/.config/wezterm/assets"
 mkdir -p "$HOME/.config/newsboat"
 mkdir -p "$HOME/.config/micro"
+mkdir -p "$HOME/.config/nvim"
 mkdir -p "$HOME/.tmux/status"
 mkdir -p "$HOME/.tmux/plugins"
 mkdir -p "$HOME/.local/bin"
@@ -42,6 +43,7 @@ cp "$repo_dir/summarize/config.json" "$HOME/.summarize/config.json"
 cp "$repo_dir/zsh/zshrc" "$HOME/.zshrc"
 cp "$repo_dir/zsh/starship.toml" "$HOME/.config/starship.toml"
 cp "$repo_dir/micro/bindings.json" "$HOME/.config/micro/bindings.json"
+cp -R "$repo_dir/nvim/." "$HOME/.config/nvim/"
 
 # Put ~/.local/bin ahead of the rest of PATH so the summarize wrapper
 # intercepts the real CLI. Idempotent: the line is appended to ~/.zprofile once.

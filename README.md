@@ -33,6 +33,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
 - A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
 - A configured zsh shell: a Starship prompt, `eza`-powered `ls`, `zoxide` smart directory jumping, command autosuggestions, and syntax highlighting.
+- Neovim with your Lua config — lazy.nvim plugin manager (version-pinned via `lazy-lock.json`), Treesitter, a file tree, and shared `Ctrl-h/j/k/l` navigation with tmux.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -128,6 +129,7 @@ Homebrew installs:
 ```text
 git
 micro
+neovim
 newsboat
 node
 tmux
@@ -156,6 +158,7 @@ Config installed:
 ~/.zshrc
 ~/.config/starship.toml
 ~/.config/micro/bindings.json
+~/.config/nvim/
 ```
 
 `install.sh` also appends (never overwrites) to `~/.zprofile`, putting `~/.local/bin` on `PATH` for the `summarize` wrapper.
@@ -173,6 +176,10 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 |-- newsboat
 |   |-- config
 |   `-- urls
+|-- nvim
+|   |-- init.lua
+|   |-- lazy-lock.json
+|   `-- lua
 |-- summarize
 |   |-- config.json
 |   `-- summarize
@@ -196,7 +203,7 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 Use this if you want to copy the config files yourself:
 
 ```sh
-mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.config/micro ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
+mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.config/micro ~/.config/nvim ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
 cp wezterm/assets/cyberpunk-red.jpg ~/.config/wezterm/assets/cyberpunk-red.jpg
 cp tmux/tmux.conf ~/.tmux.conf
@@ -210,6 +217,7 @@ cp summarize/config.json ~/.summarize/config.json
 cp zsh/zshrc ~/.zshrc
 cp zsh/starship.toml ~/.config/starship.toml
 cp micro/bindings.json ~/.config/micro/bindings.json
+cp -R nvim/. ~/.config/nvim/
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
 npm install -g @steipete/summarize
 ```

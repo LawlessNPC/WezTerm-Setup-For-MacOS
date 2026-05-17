@@ -1,5 +1,6 @@
 brew "git"
 brew "micro"
+brew "neovim"
 brew "newsboat"
 brew "node"
 brew "tmux"
