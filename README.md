@@ -31,7 +31,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A custom tmux status line with current mode, repo/directory context, disk space, load, window count, pane count, date, and 12-hour time.
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
-- A guarded `summarize` wrapper for an existing `@steipete/summarize` install. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
+- A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -109,7 +109,7 @@ The WezTerm tab bar always stays visible and includes the `+` tab button.
 
 ## Summarize Guard
 
-The `summarize` wrapper is installed to `~/.local/bin/summarize`, which should appear before `/usr/local/bin` in your `PATH`.
+`install.sh` installs the `summarize` wrapper to `~/.local/bin/summarize`, prepends `~/.local/bin` to your `PATH` in `~/.zprofile`, and `npm install -g`s the upstream `@steipete/summarize` CLI if it is missing.
 
 It keeps the upstream `@steipete/summarize` CLI available while adding local policy:
 
@@ -118,7 +118,7 @@ It keeps the upstream `@steipete/summarize` CLI available while adding local pol
 - Auto model selection uses only `cli/claude/sonnet` and `cli/codex/gpt-5.2`.
 - The default summary length is `short`, which avoids the upstream CLI returning raw extracted text for shorter pages.
 
-The wrapper expects the real summarize binary at `/usr/local/bin/summarize`. If it lives somewhere else, set `SUMMARIZE_REAL_BIN` to that path.
+The wrapper runs the real `@steipete/summarize` binary found via `SUMMARIZE_REAL_BIN`, or `/usr/local/bin/summarize` by default. When the CLI installs elsewhere (such as Homebrew's `/opt/homebrew/bin`), `install.sh` writes the correct `SUMMARIZE_REAL_BIN` into `~/.zprofile` automatically.
 
 ## Installed Pieces
 
@@ -128,7 +128,9 @@ Homebrew installs:
 git
 micro
 newsboat
+node
 tmux
+fastfetch
 wezterm
 font-victor-mono-nerd-font
 font-symbols-only-nerd-font
@@ -191,6 +193,8 @@ cp newsboat/urls ~/.config/newsboat/urls
 cp summarize/summarize ~/.local/bin/summarize
 chmod +x ~/.local/bin/summarize
 cp summarize/config.json ~/.summarize/config.json
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+npm install -g @steipete/summarize
 ```
 
 Install TPM:

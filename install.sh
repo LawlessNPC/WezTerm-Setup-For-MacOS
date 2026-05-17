@@ -37,6 +37,35 @@ cp "$repo_dir/summarize/summarize" "$HOME/.local/bin/summarize"
 chmod +x "$HOME/.local/bin/summarize"
 cp "$repo_dir/summarize/config.json" "$HOME/.summarize/config.json"
 
+# Put ~/.local/bin ahead of the rest of PATH so the summarize wrapper
+# intercepts the real CLI. Idempotent: the line is appended to ~/.zprofile once.
+zprofile="$HOME/.zprofile"
+path_line='export PATH="$HOME/.local/bin:$PATH"'
+if ! grep -qsF "$path_line" "$zprofile"; then
+  printf '\n# Added by WezTerm-Setup install.sh\n%s\n' "$path_line" >> "$zprofile"
+  echo "Added ~/.local/bin to PATH in ~/.zprofile."
+fi
+
+# Install the upstream @steipete/summarize CLI if it is missing, and point the
+# wrapper at it via SUMMARIZE_REAL_BIN when it is not at the default location.
+if command -v npm >/dev/null 2>&1; then
+  real_summarize="$(npm prefix -g)/bin/summarize"
+  if [[ ! -x "$real_summarize" && ! -x /usr/local/bin/summarize ]]; then
+    echo "Installing @steipete/summarize globally..."
+    npm install -g @steipete/summarize \
+      || echo "warning: @steipete/summarize install failed; install it manually." >&2
+  fi
+  if [[ -x "$real_summarize" && "$real_summarize" != /usr/local/bin/summarize ]]; then
+    real_line="export SUMMARIZE_REAL_BIN=\"$real_summarize\""
+    if ! grep -qsF "$real_line" "$zprofile"; then
+      printf '%s\n' "$real_line" >> "$zprofile"
+      echo "Set SUMMARIZE_REAL_BIN -> $real_summarize in ~/.zprofile."
+    fi
+  fi
+else
+  echo "warning: npm not found; skipping @steipete/summarize install." >&2
+fi
+
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
   git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
 fi

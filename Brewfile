@@ -1,7 +1,9 @@
 brew "git"
 brew "micro"
 brew "newsboat"
+brew "node"
 brew "tmux"
+brew "fastfetch"
 
 cask "wezterm"
 cask "font-victor-mono-nerd-font"
