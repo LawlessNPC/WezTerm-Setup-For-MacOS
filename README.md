@@ -32,7 +32,6 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
 - A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
-- A fastfetch system summary printed as a launch greeting, shown once per terminal tab and skipped in extra tmux split panes.
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Install On A Fresh Mac
@@ -152,7 +151,7 @@ Config installed:
 ~/.summarize/config.json
 ```
 
-`install.sh` also appends (never overwrites) to `~/.zprofile` — `PATH` for the `summarize` wrapper — and to `~/.zshrc` — the fastfetch greeting.
+`install.sh` also appends (never overwrites) to `~/.zprofile`, putting `~/.local/bin` on `PATH` for the `summarize` wrapper.
 
 tmux plugins are managed by TPM. The installer clones TPM and runs the plugin installer.
 

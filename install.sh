@@ -66,25 +66,6 @@ else
   echo "warning: npm not found; skipping @steipete/summarize install." >&2
 fi
 
-# Add a fastfetch greeting to ~/.zshrc. Idempotent: appended only once.
-if ! grep -qsF "fastfetch greeting" "$HOME/.zshrc"; then
-  cat >> "$HOME/.zshrc" <<'ZSHRC'
-
-# fastfetch greeting — shown once per terminal tab (skips extra tmux split panes)
-if command -v fastfetch >/dev/null; then
-  if [[ -n "$TMUX" ]]; then
-    if ! tmux show-environment FASTFETCH_GREETED &>/dev/null; then
-      fastfetch
-      tmux set-environment FASTFETCH_GREETED 1
-    fi
-  else
-    fastfetch
-  fi
-fi
-ZSHRC
-  echo "Added fastfetch greeting to ~/.zshrc."
-fi
-
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
   git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
 fi
