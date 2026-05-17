@@ -9,6 +9,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-111111?style=for-the-badge&logo=apple&logoColor=white)
 ![WezTerm](https://img.shields.io/badge/WezTerm-GPU%20Terminal-02d7f2?style=for-the-badge)
 ![tmux](https://img.shields.io/badge/tmux-Powerline%20Status-00ff9c?style=for-the-badge)
+![Neovim](https://img.shields.io/badge/Neovim-Lua%20Config-d62cff?style=for-the-badge&logo=neovim&logoColor=white)
 ![Homebrew](https://img.shields.io/badge/Homebrew-One%20Command-fcee0a?style=for-the-badge&logo=homebrew&logoColor=111111)
 
 A neon macOS terminal setup that installs WezTerm, tmux, fonts, and a privacy-safe status line in one pass.
