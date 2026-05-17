@@ -27,6 +27,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A cinematic background image tuned with a dark readability wash.
 - VictorMono Nerd Font plus Symbols Nerd Font fallback for clean Powerline rendering.
 - WezTerm launching straight into tmux so the terminal always has panes, sessions, and status.
+- A visible WezTerm `+` tab button: left-click opens a new tab, right-click renames the active tab.
 - A custom tmux status line with current mode, repo/directory context, disk space, load, window count, pane count, date, and 12-hour time.
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
 - A repeatable installer for setting up another MacBook Pro from scratch.
@@ -92,6 +93,16 @@ Common bindings:
 | `Ctrl-a r` | Reload `~/.tmux.conf` |
 | `v` in copy mode | Start selection |
 | `y` in copy mode | Copy selection |
+
+## WezTerm Tab Controls
+
+The WezTerm tab bar always stays visible and includes the `+` tab button.
+
+| Action | Result |
+| --- | --- |
+| Left-click `+` | Open a new tmux-backed WezTerm tab |
+| Right-click `+` | Prompt to rename the active WezTerm tab |
+| Submit a blank tab name | Reset the active tab title |
 
 ## Installed Pieces
 

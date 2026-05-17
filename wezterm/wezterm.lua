@@ -1,4 +1,5 @@
 local wezterm = require('wezterm')
+local act = wezterm.action
 local config = wezterm.config_builder()
 
 local home = wezterm.home_dir
@@ -110,7 +111,7 @@ config.window_padding = { left = 14, right = 14, top = 6, bottom = 6 }
 config.use_fancy_tab_bar = true
 config.hide_tab_bar_if_only_one_tab = false
 config.tab_bar_at_bottom = false
-config.show_new_tab_button_in_tab_bar = false
+config.show_new_tab_button_in_tab_bar = true
 config.window_frame = {
   font = wezterm.font({ family = 'VictorMono Nerd Font', weight = 'Bold' }),
   font_size = 13,
@@ -134,5 +135,27 @@ config.set_environment_variables = {
   EDITOR = 'micro',
   VISUAL = 'micro',
 }
+
+wezterm.on('new-tab-button-click', function(window, pane, button, default_action)
+  if button == 'Right' then
+    window:perform_action(
+      act.PromptInputLine {
+        description = 'Enter new name for active tab. Leave blank to reset.',
+        action = wezterm.action_callback(function(prompt_window, _, line)
+          if line then
+            prompt_window:active_tab():set_title(line)
+          end
+        end),
+      },
+      pane
+    )
+    return false
+  end
+
+  if default_action then
+    window:perform_action(default_action, pane)
+    return false
+  end
+end)
 
 return config
