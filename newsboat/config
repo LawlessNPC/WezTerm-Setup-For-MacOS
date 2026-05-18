@@ -3,7 +3,7 @@
 # --- General behavior ---------------------------------------------------
 auto-reload          yes
 reload-time          30          # minutes between background refreshes
-reload-threads       4
+reload-threads       1           # avoid Newsboat 2.43.0 SQLite cache crashes on macOS
 download-retries     2
 download-timeout     30
 confirm-exit         no
