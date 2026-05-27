@@ -27,7 +27,7 @@ mkdir -p "$HOME/.summarize"
 mkdir -p "$HOME/.zsh"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
-cp "$repo_dir/wezterm/assets/cyberpunk-red.jpg" "$HOME/.config/wezterm/assets/cyberpunk-red.jpg"
+cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
 
 cp "$repo_dir/tmux/tmux.conf" "$HOME/.tmux.conf"
 cp "$repo_dir/tmux/status/"*.sh "$HOME/.tmux/status/"

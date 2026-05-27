@@ -80,33 +80,88 @@ config.colors = {
 }
 
 --------------------------------------------------------------------------
--- Background image  (vday-screenshot treatment: image + dark wash)
---   Layer 1: the red cyberpunk art, darkened + desaturated so it reads
---            as a moody backdrop rather than an eye-searing red wall.
---   Layer 2: a near-black wash on top to keep terminal text legible.
---   Tune `brightness` / `saturation` / wash `opacity` to taste.
+-- Background image rotation
+--   Pool of wallpapers in assets/. Each new tab grabs the next one from a
+--   shuffled queue (so every wallpaper is used once before any repeats),
+--   and the active tab's pick is applied via set_config_overrides.
+--   Same dark-wash treatment is layered on top of every image for legibility.
 --------------------------------------------------------------------------
-config.background = {
-  {
-    source = {
-      File = home .. '/.config/wezterm/assets/cyberpunk-red.jpg',
-    },
-    width  = 'Cover',
-    height = 'Cover',
-    horizontal_align = 'Right', -- keep the figure visible on wide windows
-    hsb = {
-      brightness = 0.16,
-      saturation = 0.65,
-      hue        = 1.0,
-    },
-  },
-  {
-    source  = { Color = '#0a0a12' },
-    width   = '100%',
-    height  = '100%',
-    opacity = 0.55,
-  },
+local ASSETS = home .. '/.config/wezterm/assets'
+local wallpapers = {
+  ASSETS .. '/spiderverse.jpg',
+  ASSETS .. '/carnage.jpg',
+  ASSETS .. '/highlander.jpg',
+  ASSETS .. '/matrix.jpg',
+  ASSETS .. '/mrrobot.png',
+  ASSETS .. '/piedpiper.jpg',
+  ASSETS .. '/cyberpunk-red.jpg',
+  ASSETS .. '/umbrella.jpg',
 }
+
+math.randomseed(os.time())
+
+local function shuffled(list)
+  local out = {}
+  for i, v in ipairs(list) do out[i] = v end
+  for i = #out, 2, -1 do
+    local j = math.random(i)
+    out[i], out[j] = out[j], out[i]
+  end
+  return out
+end
+
+local rotation = { queue = {}, last = nil }
+local function next_wallpaper()
+  if #rotation.queue == 0 then
+    rotation.queue = shuffled(wallpapers)
+    if rotation.last and rotation.queue[1] == rotation.last and #rotation.queue > 1 then
+      rotation.queue[1], rotation.queue[2] = rotation.queue[2], rotation.queue[1]
+    end
+  end
+  local pick = table.remove(rotation.queue, 1)
+  rotation.last = pick
+  return pick
+end
+
+local function build_background(image_path)
+  return {
+    {
+      source = { File = image_path },
+      width  = 'Cover',
+      height = 'Cover',
+      horizontal_align = 'Center',
+      hsb = { brightness = 0.3, saturation = 0.65, hue = 1.0 },
+    },
+    {
+      source  = { Color = '#0a0a12' },
+      width   = '100%',
+      height  = '100%',
+      opacity = 0.35,
+    },
+  }
+end
+
+config.background = build_background(next_wallpaper())
+
+local tab_bg = {}       -- tab_id -> image path
+local applied_bg = {}   -- "window_id:tab_id" -> image path currently applied
+
+wezterm.on('update-status', function(window, _pane)
+  local tab = window:active_tab()
+  if not tab then return end
+  local tid = tab:tab_id()
+  if not tab_bg[tid] then
+    tab_bg[tid] = next_wallpaper()
+  end
+  local key = window:window_id() .. ':' .. tid
+  local desired = tab_bg[tid]
+  if applied_bg[key] ~= desired then
+    applied_bg[key] = desired
+    local overrides = window:get_config_overrides() or {}
+    overrides.background = build_background(desired)
+    window:set_config_overrides(overrides)
+  end
+end)
 
 --------------------------------------------------------------------------
 -- Appearance
