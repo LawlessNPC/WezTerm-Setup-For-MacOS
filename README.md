@@ -25,7 +25,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 ## What You Get
 
 - A dark cyberpunk-neon WezTerm theme with cyan, magenta, yellow, and green accents.
-- A cinematic background image tuned with a dark readability wash.
+- A rotating pool of cinematic background images, each tuned with a dark readability wash. Each new tab picks a random wallpaper from a shuffled queue and keeps it for the tab's lifetime; switching back to a tab restores its original image.
 - VictorMono Nerd Font plus Symbols Nerd Font fallback for clean Powerline rendering.
 - WezTerm launching straight into tmux so the terminal always has panes, sessions, and status.
 - A visible WezTerm `+` tab button: left-click opens a new tab, right-click renames the active tab.
@@ -147,7 +147,7 @@ Config installed:
 
 ```text
 ~/.config/wezterm/wezterm.lua
-~/.config/wezterm/assets/cyberpunk-red.jpg
+~/.config/wezterm/assets/  (full wallpaper pool)
 ~/.tmux.conf
 ~/.tmux/status/context.sh
 ~/.tmux/status/disk.sh
@@ -193,7 +193,14 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 |-- wezterm
 |   |-- wezterm.lua
 |   `-- assets
-|       `-- cyberpunk-red.jpg
+|       |-- carnage.jpg
+|       |-- cyberpunk-red.jpg
+|       |-- highlander.jpg
+|       |-- matrix.jpg
+|       |-- mrrobot.png
+|       |-- piedpiper.jpg
+|       |-- spiderverse.jpg
+|       `-- umbrella.jpg
 `-- zsh
     |-- starship.toml
     `-- zshrc
@@ -206,7 +213,7 @@ Use this if you want to copy the config files yourself:
 ```sh
 mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.config/micro ~/.config/nvim ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
-cp wezterm/assets/cyberpunk-red.jpg ~/.config/wezterm/assets/cyberpunk-red.jpg
+cp -R wezterm/assets/. ~/.config/wezterm/assets/
 cp tmux/tmux.conf ~/.tmux.conf
 cp tmux/status/*.sh ~/.tmux/status/
 chmod +x ~/.tmux/status/*.sh
