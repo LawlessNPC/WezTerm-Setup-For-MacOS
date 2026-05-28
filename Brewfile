@@ -1,4 +1,5 @@
 brew "git"
+brew "jq"
 brew "micro"
 brew "neovim"
 brew "newsboat"

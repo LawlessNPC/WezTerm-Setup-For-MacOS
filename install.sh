@@ -25,6 +25,7 @@ mkdir -p "$HOME/.tmux/plugins"
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.summarize"
 mkdir -p "$HOME/.zsh"
+mkdir -p "$HOME/.claude"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
 cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
@@ -72,6 +73,32 @@ if command -v npm >/dev/null 2>&1; then
   fi
 else
   echo "warning: npm not found; skipping @steipete/summarize install." >&2
+fi
+
+# Claude Code status line: drop in the two scripts and merge the statusLine
+# block into ~/.claude/settings.json without clobbering other settings.
+cp "$repo_dir/claude/statusline-wrapper.sh" "$HOME/.claude/statusline-wrapper.sh"
+cp "$repo_dir/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+chmod +x "$HOME/.claude/statusline-wrapper.sh" "$HOME/.claude/statusline-command.sh"
+
+if command -v npm >/dev/null 2>&1; then
+  if ! command -v ccstatusline >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/ccstatusline" ]]; then
+    echo "Installing ccstatusline globally..."
+    npm install -g ccstatusline \
+      || echo "warning: ccstatusline install failed; install it manually." >&2
+  fi
+fi
+
+if command -v jq >/dev/null 2>&1; then
+  settings="$HOME/.claude/settings.json"
+  [[ -f "$settings" ]] || echo '{}' > "$settings"
+  tmp="$(mktemp)"
+  jq '.statusLine = {command: "bash ~/.claude/statusline-wrapper.sh", type: "command"}' \
+    "$settings" > "$tmp" && mv "$tmp" "$settings"
+  echo "Merged statusLine block into ~/.claude/settings.json."
+else
+  echo "warning: jq not found; add this to ~/.claude/settings.json manually:" >&2
+  echo '  "statusLine": { "command": "bash ~/.claude/statusline-wrapper.sh", "type": "command" }' >&2
 fi
 
 if [[ ! -d "$HOME/.zsh/zsh-autosuggestions" ]]; then
