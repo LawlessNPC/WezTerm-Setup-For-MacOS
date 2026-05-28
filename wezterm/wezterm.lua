@@ -81,10 +81,12 @@ config.colors = {
 
 --------------------------------------------------------------------------
 -- Background image rotation
---   Pool of wallpapers in assets/. Each new tab grabs the next one from a
---   shuffled queue (so every wallpaper is used once before any repeats),
---   and the active tab's pick is applied via set_config_overrides.
---   Same dark-wash treatment is layered on top of every image for legibility.
+--   Pool of wallpapers in assets/. Each tab gets one random wallpaper from
+--   a Fisher-Yates-shuffled queue on first render, and keeps it for the
+--   tab's lifetime. Switching tabs swaps the window's background via
+--   set_config_overrides; old tabs restore their original image on return.
+--   Background tables are prebuilt at startup so switches only swap a
+--   table reference rather than reallocating per call.
 --------------------------------------------------------------------------
 local ASSETS = home .. '/.config/wezterm/assets'
 local wallpapers = {
@@ -141,10 +143,15 @@ local function build_background(image_path)
   }
 end
 
-config.background = build_background(next_wallpaper())
+local prebuilt = {}
+for _, path in ipairs(wallpapers) do
+  prebuilt[path] = build_background(path)
+end
 
-local tab_bg = {}       -- tab_id -> image path
-local applied_bg = {}   -- "window_id:tab_id" -> image path currently applied
+config.background = prebuilt[next_wallpaper()]
+
+local tab_bg = {}      -- tab_id -> image path (sticky for tab's lifetime)
+local applied_bg = {}  -- window_id -> image path currently applied
 
 wezterm.on('update-status', function(window, _pane)
   local tab = window:active_tab()
@@ -153,12 +160,12 @@ wezterm.on('update-status', function(window, _pane)
   if not tab_bg[tid] then
     tab_bg[tid] = next_wallpaper()
   end
-  local key = window:window_id() .. ':' .. tid
+  local wid = window:window_id()
   local desired = tab_bg[tid]
-  if applied_bg[key] ~= desired then
-    applied_bg[key] = desired
+  if applied_bg[wid] ~= desired then
+    applied_bg[wid] = desired
     local overrides = window:get_config_overrides() or {}
-    overrides.background = build_background(desired)
+    overrides.background = prebuilt[desired]
     window:set_config_overrides(overrides)
   end
 end)
