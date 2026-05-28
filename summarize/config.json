@@ -4,21 +4,20 @@
     "rules": [
       {
         "when": ["website", "youtube", "text", "file"],
-        "candidates": ["cli/claude/sonnet", "cli/codex/gpt-5.2"]
+        "candidates": ["cli/claude/opus", "cli/codex/gpt-5.2"]
       },
       {
         "when": ["image", "video"],
-        "candidates": ["cli/claude/sonnet", "cli/codex/gpt-5.2"]
+        "candidates": ["cli/claude/opus", "cli/codex/gpt-5.2"]
       },
       {
-        "candidates": ["cli/claude/sonnet", "cli/codex/gpt-5.2"]
+        "candidates": ["cli/claude/opus", "cli/codex/gpt-5.2"]
       }
     ]
   },
   "cli": {
-    "enabled": ["claude", "codex"],
     "autoFallback": {
-      "enabled": true,
+      "enabled": false,
       "onlyWhenNoApiKeys": false,
       "order": ["claude", "codex"]
     }
