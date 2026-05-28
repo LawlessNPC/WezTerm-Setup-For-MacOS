@@ -26,6 +26,7 @@ mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.summarize"
 mkdir -p "$HOME/.zsh"
 mkdir -p "$HOME/.claude"
+mkdir -p "$HOME/.config/ccstatusline"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
 cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
@@ -88,6 +89,11 @@ if command -v npm >/dev/null 2>&1; then
       || echo "warning: ccstatusline install failed; install it manually." >&2
   fi
 fi
+
+# ccstatusline widget config (model, context-length, session-cost, git-branch,
+# git-changes). Overwrites any existing config so every machine renders the
+# same statusline.
+cp "$repo_dir/ccstatusline/settings.json" "$HOME/.config/ccstatusline/settings.json"
 
 if command -v jq >/dev/null 2>&1; then
   settings="$HOME/.claude/settings.json"
