@@ -24,6 +24,10 @@ local tmux = first_existing({
 --------------------------------------------------------------------------
 -- Fonts
 --------------------------------------------------------------------------
+config.font_dirs = {
+  home .. '/Library/Fonts',
+}
+
 config.font = wezterm.font_with_fallback({
   'VictorMono Nerd Font',
   'Symbols Nerd Font Mono',
