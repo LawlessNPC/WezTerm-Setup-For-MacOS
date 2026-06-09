@@ -10,6 +10,48 @@ const GEMINI_ENV_KEYS = [
   "GOOGLE_GENERATIVE_AI_API_KEY",
 ];
 
+// The themed terminal renderer collapses the blank line between plain
+// paragraphs, so prose summaries arrive as one hard-to-read block. Asking for
+// sectioned markdown (headings + bullets) keeps the themed colors/links while
+// restoring the vertical spacing the renderer DOES honor around structural
+// blocks. Override per run with your own --prompt / --prompt-file (then skipped).
+const DEFAULT_SUMMARY_PROMPT =
+  "Summarize the content as 2 to 4 sections. Each section begins with a short " +
+  "markdown heading on its own line (## Heading) followed by 2 to 3 concise " +
+  "bullet points. Output ONLY the structured summary in markdown: no preamble, " +
+  "no meta-commentary, no insights, no closing remarks.";
+
+// When any of these are present we leave the prompt alone (user override, raw
+// extraction, machine-readable output, help/version, or cache maintenance).
+const PROMPT_SKIP_FLAGS = new Set([
+  "--prompt",
+  "--prompt-file",
+  "--extract",
+  "--json",
+  "--help",
+  "-h",
+  "--version",
+  "-V",
+  "--cache-stats",
+  "--clear-cache",
+]);
+
+// Subcommands that are not "summarize a URL" and must not receive a prompt.
+const NON_SUMMARY_SUBCOMMANDS = new Set(["slides", "transcriber", "refresh-free"]);
+
+function shouldInjectPrompt(args) {
+  if (args.length === 0) return false;
+  if (NON_SUMMARY_SUBCOMMANDS.has((args[0] ?? "").toLowerCase())) return false;
+  for (const arg of args) {
+    const normalized = (arg ?? "").toLowerCase();
+    if (PROMPT_SKIP_FLAGS.has(normalized)) return false;
+    if (normalized.startsWith("--prompt=") || normalized.startsWith("--prompt-file=")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function valueRequestsGemini(value) {
   const normalized = value.trim().toLowerCase();
   return normalized.includes("gemini") || normalized.startsWith("google/");
@@ -135,6 +177,10 @@ async function main() {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`summarize: could not resolve HN story link: ${message}\n`);
     }
+  }
+
+  if (shouldInjectPrompt(args)) {
+    args.push("--prompt", DEFAULT_SUMMARY_PROMPT);
   }
 
   const child = spawn(REAL_SUMMARIZE, args, { stdio: "inherit", env: envForSummarize() });
