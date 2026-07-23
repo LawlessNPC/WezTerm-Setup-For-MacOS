@@ -33,6 +33,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - Privacy-safe screen sharing: no raw username, hostname, or home-folder basename in the tmux status line.
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
 - A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
+- A Claude Code completion chime: a Stop hook plays a quiet "Awaiting Orders" clip when Claude finishes a task, instead of reading the response aloud with TTS.
 - A configured zsh shell: a Starship prompt, `eza`-powered `ls`, `zoxide` smart directory jumping, command autosuggestions, and syntax highlighting.
 - Neovim with your Lua config — lazy.nvim plugin manager (version-pinned via `lazy-lock.json`), Treesitter, a file tree, and shared `Ctrl-h/j/k/l` navigation with tmux.
 - A repeatable installer for setting up another MacBook Pro from scratch.

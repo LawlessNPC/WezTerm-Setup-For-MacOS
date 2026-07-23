@@ -82,6 +82,10 @@ cp "$repo_dir/claude/statusline-wrapper.sh" "$HOME/.claude/statusline-wrapper.sh
 cp "$repo_dir/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 chmod +x "$HOME/.claude/statusline-wrapper.sh" "$HOME/.claude/statusline-command.sh"
 
+# Claude Code task-complete sound, played by a Stop hook instead of TTS.
+mkdir -p "$HOME/.claude/sounds"
+cp "$repo_dir/claude/sounds/task-complete.mp3" "$HOME/.claude/sounds/task-complete.mp3"
+
 if command -v npm >/dev/null 2>&1; then
   if ! command -v ccstatusline >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/ccstatusline" ]]; then
     echo "Installing ccstatusline globally..."
@@ -99,12 +103,14 @@ if command -v jq >/dev/null 2>&1; then
   settings="$HOME/.claude/settings.json"
   [[ -f "$settings" ]] || echo '{}' > "$settings"
   tmp="$(mktemp)"
-  jq '.statusLine = {command: "bash ~/.claude/statusline-wrapper.sh", type: "command"}' \
+  jq '.statusLine = {command: "bash ~/.claude/statusline-wrapper.sh", type: "command"}
+    | .hooks.Stop = [{hooks: [{type: "command", command: "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", async: true}]}]' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "Merged statusLine block into ~/.claude/settings.json."
+  echo "Merged statusLine and Stop-hook blocks into ~/.claude/settings.json."
 else
   echo "warning: jq not found; add this to ~/.claude/settings.json manually:" >&2
   echo '  "statusLine": { "command": "bash ~/.claude/statusline-wrapper.sh", "type": "command" }' >&2
+  echo '  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", "async": true }] }] }' >&2
 fi
 
 if [[ ! -d "$HOME/.zsh/zsh-autosuggestions" ]]; then
