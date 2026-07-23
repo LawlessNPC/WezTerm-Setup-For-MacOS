@@ -55,8 +55,8 @@ sudo xcodebuild -license accept
 Then install the setup:
 
 ```sh
-git clone https://github.com/LawlessNPC/WezTerm-Setup-For-MacOS.git ~/WezTerm-Setup
-cd ~/WezTerm-Setup
+git clone https://github.com/LawlessNPC/WezTerm-Setup-For-MacOS.git ~/WezTerm-Setup-For-MacOS
+cd ~/WezTerm-Setup-For-MacOS
 ./install.sh
 ```
 
@@ -301,7 +301,7 @@ The first result should be:
 After changing your local WezTerm or tmux setup, copy the updated files into this repo and push:
 
 ```sh
-cd ~/WezTerm-Setup
+cd ~/WezTerm-Setup-For-MacOS
 git add .
 git commit -m "Update terminal setup"
 git push
