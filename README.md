@@ -1,6 +1,6 @@
 <div align="center">
 
-# WezTerm Setup
+# WezTerm Setup For MacOS
 
 <img src="wezterm/assets/cyberpunk-red.jpg" alt="Cyberpunk red terminal background" width="100%">
 
