@@ -55,7 +55,7 @@ sudo xcodebuild -license accept
 Then install the setup:
 
 ```sh
-git clone https://github.com/LawlessNPC/WezTerm-Setup.git ~/WezTerm-Setup
+git clone https://github.com/LawlessNPC/WezTerm-Setup-For-MacOS.git ~/WezTerm-Setup
 cd ~/WezTerm-Setup
 ./install.sh
 ```
