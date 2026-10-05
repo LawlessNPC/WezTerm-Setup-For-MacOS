@@ -30,9 +30,13 @@ mkdir -p "$HOME/.zsh"
 mkdir -p "$HOME/.claude"
 mkdir -p "$HOME/.config/ccstatusline"
 
-cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
-cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
-cp "$repo_dir/wezterm/themes/"*.lua "$HOME/.config/wezterm/themes/"
+# Skip when ~/.config/wezterm is a symlink to this repo's wezterm/ dir:
+# cp onto the same file fails and would abort the install under set -e.
+if [[ "$(cd "$HOME/.config/wezterm" && pwd -P)" != "$(cd "$repo_dir/wezterm" && pwd -P)" ]]; then
+  cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
+  cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
+  cp "$repo_dir/wezterm/themes/"*.lua "$HOME/.config/wezterm/themes/"
+fi
 
 cp "$repo_dir/tmux/tmux.conf" "$HOME/.tmux.conf"
 cp "$repo_dir/tmux/themes/"*.conf "$HOME/.tmux/themes/"
