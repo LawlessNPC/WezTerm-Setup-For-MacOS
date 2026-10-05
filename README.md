@@ -2,7 +2,7 @@
 
 # WezTerm Setup For MacOS
 
-<img src="wezterm/assets/cyberpunk-red.jpg" alt="Cyberpunk red terminal background" width="100%">
+<img src="docs/screenshots/glass.jpg" alt="WezTerm with the Liquid Glass theme: translucent blurred window, pill tabs, Apple system colors, and a tmux status bar with mode and clock pills" width="100%">
 
 <br>
 
@@ -40,6 +40,10 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A repeatable installer for setting up another MacBook Pro from scratch.
 
 ## Switching Themes
+
+The screenshot at the top shows **Liquid Glass**. **Cyberpunk** layers its neon palette over a rotating pool of darkened wallpapers like this one:
+
+<img src="wezterm/assets/cyberpunk-red.jpg" alt="Cyberpunk red wallpaper used by the cyberpunk theme" width="100%">
 
 Change one line in each file, then reload (WezTerm reloads on save; tmux with `prefix r`):
 
@@ -182,6 +186,9 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 ```text
 .
 |-- Brewfile
+|-- docs
+|   `-- screenshots
+|       `-- glass.jpg
 |-- install.sh
 |-- micro
 |   `-- bindings.json
