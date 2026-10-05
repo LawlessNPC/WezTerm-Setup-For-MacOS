@@ -24,9 +24,10 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 
 ## What You Get
 
-- A dark cyberpunk-neon WezTerm theme with cyan, magenta, yellow, and green accents.
-- A rotating pool of cinematic background images, each tuned with a dark readability wash. Each new tab picks a random wallpaper from a shuffled queue and keeps it for the tab's lifetime; switching back to a tab restores its original image.
-- VictorMono Nerd Font plus Symbols Nerd Font fallback for clean Powerline rendering.
+- Two switchable themes, applied to both WezTerm and tmux:
+  - **Liquid Glass** (default) -- a translucent, heavily blurred window that lets the desktop show through, a soft top-edge sheen, Apple dark-mode system colors, SF Mono, floating pill tabs with integrated traffic lights, and a tmux bar of quiet text plus pills (a mode pill that turns blue/orange/yellow/purple for Normal/Prefix/Copy/Zoom).
+  - **Cyberpunk** -- neon cyan/magenta/yellow accents over a rotating pool of cinematic wallpapers. Each new tab picks a random wallpaper from a shuffled queue and keeps it for the tab's lifetime.
+- SF Mono is loaded straight from Terminal.app (no install needed); VictorMono Nerd Font for the cyberpunk theme; Symbols Nerd Font fallback for pill caps and Powerline glyphs.
 - WezTerm launching straight into tmux so the terminal always has panes, sessions, and status.
 - A visible WezTerm `+` tab button: left-click opens a new tab, right-click renames the active tab.
 - A custom tmux status line with current mode, repo/directory context, disk space, load, window count, pane count, date, and 12-hour time.
@@ -37,6 +38,13 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - A configured zsh shell: a Starship prompt, `eza`-powered `ls`, `zoxide` smart directory jumping, command autosuggestions, and syntax highlighting.
 - Neovim with your Lua config — lazy.nvim plugin manager (version-pinned via `lazy-lock.json`), Treesitter, a file tree, and shared `Ctrl-h/j/k/l` navigation with tmux.
 - A repeatable installer for setting up another MacBook Pro from scratch.
+
+## Switching Themes
+
+Change one line in each file, then reload (WezTerm reloads on save; tmux with `prefix r`):
+
+- `~/.config/wezterm/wezterm.lua` -- `local THEME = 'glass'` or `'cyberpunk'`
+- `~/.tmux.conf` -- `source-file ~/.tmux/themes/glass.conf` or `cyberpunk.conf`
 
 ## Install On A Fresh Mac
 
@@ -149,7 +157,9 @@ Config installed:
 ```text
 ~/.config/wezterm/wezterm.lua
 ~/.config/wezterm/assets/  (full wallpaper pool)
+~/.config/wezterm/themes/  (glass.lua, cyberpunk.lua)
 ~/.tmux.conf
+~/.tmux/themes/           (glass.conf, cyberpunk.conf)
 ~/.tmux/status/context.sh
 ~/.tmux/status/disk.sh
 ~/.tmux/status/load.sh
@@ -187,12 +197,18 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 |   `-- summarize
 |-- tmux
 |   |-- tmux.conf
+|   |-- themes
+|   |   |-- glass.conf
+|   |   `-- cyberpunk.conf
 |   `-- status
 |       |-- context.sh
 |       |-- disk.sh
 |       `-- load.sh
 |-- wezterm
 |   |-- wezterm.lua
+|   |-- themes
+|   |   |-- glass.lua
+|   |   `-- cyberpunk.lua
 |   `-- assets
 |       |-- carnage.jpg
 |       |-- cyberpunk-red.jpg
@@ -212,10 +228,12 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 Use this if you want to copy the config files yourself:
 
 ```sh
-mkdir -p ~/.config/wezterm/assets ~/.config/newsboat ~/.config/micro ~/.config/nvim ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
+mkdir -p ~/.config/wezterm/assets ~/.config/wezterm/themes ~/.tmux/themes ~/.config/newsboat ~/.config/micro ~/.config/nvim ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
+cp wezterm/themes/*.lua ~/.config/wezterm/themes/
 cp -R wezterm/assets/. ~/.config/wezterm/assets/
 cp tmux/tmux.conf ~/.tmux.conf
+cp tmux/themes/*.conf ~/.tmux/themes/
 cp tmux/status/*.sh ~/.tmux/status/
 chmod +x ~/.tmux/status/*.sh
 cp newsboat/config ~/.config/newsboat/config

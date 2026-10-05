@@ -30,5 +30,7 @@ There is no build, lint, or test suite.
 ## Conventions
 
 - Privacy: the tmux status line must never show the real username, hostname, or home-folder basename (screen-share safe). Preserve this when touching `tmux/` or `tmux/status/*.sh`.
-- Theme: dark cyberpunk-neon. Keep new UI in the existing palette — bg `#0a0a12`, magenta `#d62cff`, cyan `#02d7f2`, yellow `#fcee0a`, green `#00ff9c`.
+- Themes: styling lives in switchable theme files — `wezterm/themes/{glass,cyberpunk}.lua` (selected by `local THEME` in `wezterm.lua`) and `tmux/themes/{glass,cyberpunk}.conf` (selected by the `source-file` line in `tmux.conf`). Keep each pair in sync and keep theme-specific settings out of the shared files.
+  - Glass (default, dark only): Apple system colors — label `#F5F5F7`, secondary `#8E8E93`, fill `#3A3A3C`, blue `#0A84FF`; transparent backgrounds (`bg=default` in tmux); SF Mono loaded via `font_dirs` from Terminal.app.
+  - Cyberpunk: bg `#0a0a12`, magenta `#d62cff`, cyan `#02d7f2`, yellow `#fcee0a`, green `#00ff9c`.
 - Commits: prefix with the component touched (`wezterm:`, `tmux:`, `claude:`, `summarize:`, `docs:`), e.g. `claude: play task-complete sound via Stop hook instead of TTS`.

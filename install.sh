@@ -17,10 +17,12 @@ fi
 brew bundle --file "$repo_dir/Brewfile"
 
 mkdir -p "$HOME/.config/wezterm/assets"
+mkdir -p "$HOME/.config/wezterm/themes"
 mkdir -p "$HOME/.config/newsboat"
 mkdir -p "$HOME/.config/micro"
 mkdir -p "$HOME/.config/nvim"
 mkdir -p "$HOME/.tmux/status"
+mkdir -p "$HOME/.tmux/themes"
 mkdir -p "$HOME/.tmux/plugins"
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.summarize"
@@ -30,8 +32,10 @@ mkdir -p "$HOME/.config/ccstatusline"
 
 cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
 cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
+cp "$repo_dir/wezterm/themes/"*.lua "$HOME/.config/wezterm/themes/"
 
 cp "$repo_dir/tmux/tmux.conf" "$HOME/.tmux.conf"
+cp "$repo_dir/tmux/themes/"*.conf "$HOME/.tmux/themes/"
 cp "$repo_dir/tmux/status/"*.sh "$HOME/.tmux/status/"
 chmod +x "$HOME/.tmux/status/"*.sh
 
