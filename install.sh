@@ -18,6 +18,7 @@ brew bundle --file "$repo_dir/Brewfile"
 
 mkdir -p "$HOME/.config/wezterm/assets"
 mkdir -p "$HOME/.config/wezterm/themes"
+mkdir -p "$HOME/.config/wezterm/bin"
 mkdir -p "$HOME/.config/newsboat"
 mkdir -p "$HOME/.config/micro"
 mkdir -p "$HOME/.config/nvim"
@@ -36,7 +37,9 @@ if [[ "$(cd "$HOME/.config/wezterm" && pwd -P)" != "$(cd "$repo_dir/wezterm" && 
   cp "$repo_dir/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua"
   cp -R "$repo_dir/wezterm/assets/." "$HOME/.config/wezterm/assets/"
   cp "$repo_dir/wezterm/themes/"*.lua "$HOME/.config/wezterm/themes/"
+  cp "$repo_dir/wezterm/bin/claude-tasks" "$HOME/.config/wezterm/bin/claude-tasks"
 fi
+chmod +x "$HOME/.config/wezterm/bin/claude-tasks"
 
 cp "$repo_dir/tmux/tmux.conf" "$HOME/.tmux.conf"
 cp "$repo_dir/tmux/themes/"*.conf "$HOME/.tmux/themes/"
@@ -112,13 +115,16 @@ if command -v jq >/dev/null 2>&1; then
   [[ -f "$settings" ]] || echo '{}' > "$settings"
   tmp="$(mktemp)"
   jq '.statusLine = {command: "bash ~/.claude/statusline-wrapper.sh", type: "command"}
-    | .hooks.Stop = [{hooks: [{type: "command", command: "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", async: true}]}]' \
+    | .hooks.Stop = [{hooks: [{type: "command", command: "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", async: true}]}]
+    | .hooks.PostToolUse = ([(.hooks.PostToolUse // [])[] | select(.matcher != "Bash|Agent")]
+        + [{matcher: "Bash|Agent", hooks: [{type: "command", command: "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --hook 2>/dev/null || true", async: true}]}])' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "Merged statusLine and Stop-hook blocks into ~/.claude/settings.json."
+  echo "Merged statusLine, Stop-hook and task-panel hook blocks into ~/.claude/settings.json."
 else
   echo "warning: jq not found; add this to ~/.claude/settings.json manually:" >&2
   echo '  "statusLine": { "command": "bash ~/.claude/statusline-wrapper.sh", "type": "command" }' >&2
-  echo '  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", "async": true }] }] }' >&2
+  echo '  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", "async": true }] }],' >&2
+  echo '             "PostToolUse": [{ "matcher": "Bash|Agent", "hooks": [{ "type": "command", "command": "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --hook 2>/dev/null || true", "async": true }] }] }' >&2
 fi
 
 if [[ ! -d "$HOME/.zsh/zsh-autosuggestions" ]]; then

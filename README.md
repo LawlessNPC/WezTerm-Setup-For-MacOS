@@ -136,6 +136,23 @@ It keeps the upstream `@steipete/summarize` CLI available while adding local pol
 
 The wrapper runs the real `@steipete/summarize` binary found via `SUMMARIZE_REAL_BIN`, or `/usr/local/bin/summarize` by default. When the CLI installs elsewhere (such as Homebrew's `/opt/homebrew/bin`), `install.sh` writes the correct `SUMMARIZE_REAL_BIN` into `~/.zprofile` automatically.
 
+## Claude Tasks Panel
+
+A side pane listing Claude Code's background shells and subagents across every session, with how long each has run, its last line of output, and for builds and tests a bar with **% left and an ETA**. The estimate is the median of the last five successful runs of the same command (`make check`, `make test-watch`, …), measured from Claude's own task files. A command with no history shows elapsed time only.
+
+- **Opens by itself**: a `PostToolUse` hook (`claude-tasks --hook`) splits it to the right of the Claude pane when a background task starts and no panel is open.
+- **Closes by itself**: about 8 seconds after nothing is running.
+- **`Cmd+Shift+B`** opens it by hand. That copy stays open until you press `q`.
+
+| Key | Does |
+| --- | --- |
+| `j` / `k` | Move the selection |
+| `x` | Kill the selected shell (asks `y/n`; agents are stopped from Claude) |
+| `d` | Clear stale rows: tasks whose shell died without finishing |
+| `q` | Close the panel |
+
+Long foreground commands (5 seconds or more) show too, marked `foreground`. `claude-tasks --list` prints the same thing once, for debugging. The tests are in `wezterm/bin/test_claude_tasks.py` (`python3 -m unittest wezterm/bin/test_claude_tasks.py`).
+
 ## Installed Pieces
 
 Homebrew installs:
@@ -162,6 +179,7 @@ Config installed:
 ~/.config/wezterm/wezterm.lua
 ~/.config/wezterm/assets/  (full wallpaper pool)
 ~/.config/wezterm/themes/  (glass.lua, cyberpunk.lua)
+~/.config/wezterm/bin/claude-tasks
 ~/.tmux.conf
 ~/.tmux/themes/           (glass.conf, cyberpunk.conf)
 ~/.tmux/status/context.sh
@@ -213,6 +231,9 @@ tmux plugins are managed by TPM, and `zsh-autosuggestions` / `zsh-syntax-highlig
 |       `-- load.sh
 |-- wezterm
 |   |-- wezterm.lua
+|   |-- bin
+|   |   |-- claude-tasks
+|   |   `-- test_claude_tasks.py
 |   |-- themes
 |   |   |-- glass.lua
 |   |   `-- cyberpunk.lua
@@ -238,6 +259,7 @@ Use this if you want to copy the config files yourself:
 mkdir -p ~/.config/wezterm/assets ~/.config/wezterm/themes ~/.tmux/themes ~/.config/newsboat ~/.config/micro ~/.config/nvim ~/.tmux/status ~/.local/bin ~/.summarize ~/.zsh
 cp wezterm/wezterm.lua ~/.config/wezterm/wezterm.lua
 cp wezterm/themes/*.lua ~/.config/wezterm/themes/
+mkdir -p ~/.config/wezterm/bin && cp wezterm/bin/claude-tasks ~/.config/wezterm/bin/ && chmod +x ~/.config/wezterm/bin/claude-tasks
 cp -R wezterm/assets/. ~/.config/wezterm/assets/
 cp tmux/tmux.conf ~/.tmux.conf
 cp tmux/themes/*.conf ~/.tmux/themes/

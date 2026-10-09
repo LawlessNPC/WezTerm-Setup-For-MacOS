@@ -1,0 +1,619 @@
+#!/usr/bin/env python3
+"""claude-tasks: a WezTerm side panel for Claude Code's background tasks.
+
+    claude-tasks           the panel; stays open until you press q
+    claude-tasks --auto    the panel; closes itself once nothing is running
+    claude-tasks --hook    PostToolUse hook: opens an --auto panel beside the
+                           Claude pane when a background task starts and no
+                           panel is open
+    claude-tasks --list    one-shot plain listing (for debugging)
+
+Where the facts come from:
+- Claude Code writes each background shell's output to
+  $TMPDIR-ish /private/tmp/claude-<uid>/<project>/<session>/tasks/<id>.output and
+  appends "[exited with code N]" (or "[killed]") when it ends. While it runs, its
+  shell holds that file open, so `lsof` says which tasks are alive and their pids.
+- Subagents get <id>.output as a symlink to their transcript; they are done once
+  the parent session's transcript carries a <task-notification> for that id.
+- Descriptions and commands come from the session transcript
+  (~/.claude/projects/<project>/<session>.jsonl), read incrementally.
+- "% left" is an estimate: elapsed time against the median of the last five
+  successful runs of the same command (or the sum of its parts, e.g.
+  `make check` + `make test-watch`), measured from finished tasks' output files.
+
+Python 3.9 compatible (the system python3), stdlib only.
+"""
+import glob
+import json
+import os
+import re
+import select
+import signal
+import statistics
+import subprocess
+import sys
+import termios
+import time
+import tty
+
+UID = os.getuid()
+TASK_GLOB = "/private/tmp/claude-%d/*/*/tasks/*.output" % UID
+PROJECTS = os.path.expanduser("~/.claude/projects")
+STATE_DIR = os.path.expanduser("~/.local/state/claude-tasks")
+PIDFILE = os.path.join(STATE_DIR, "panel.pid")
+DISMISSED = os.path.join(STATE_DIR, "dismissed.json")
+
+REFRESH = 2.0            # seconds between redraws
+GRACE = 8.0              # --auto: seconds the final state stays up before closing
+RECENT = 24 * 3600       # finished/stale tasks older than this are not listed
+HISTORY_AGE = 30 * 86400 # finished tasks younger than this feed the estimates
+DONE_FADE = 120          # finished tasks drop off the list after this long
+AGENT_IDLE_STALE = 3600  # an agent with no completion and no writes this long is stale
+
+EXIT_RE = re.compile(r"\[exited with code (-?\d+)\]\s*$")
+BG_RE = re.compile(r"Command running in background with ID: ([A-Za-z0-9]+)")
+AGENT_RE = re.compile(r"agentId: ([A-Za-z0-9]+)")
+DETACHED = "[process exited while detached"
+NOTE_RE = re.compile(r"<task-id>([A-Za-z0-9]+)</task-id>.*?<status>(\w+)</status>", re.S)
+STEP_RE = re.compile(
+    r"\bmake(?:\s+-C\s+\S+)?\s+[A-Za-z][\w-]*"
+    r"|\bxcodebuild\b[^;&|]*?-scheme\s+\S+[^;&|]*?\b(?:test|build|archive)\b"
+    r"|\bswift\s+(?:build|test)\b"
+    r"|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?[\w:-]+"
+    r"|\bcargo\s+\w+|\bpytest\b|\bgo\s+test\b"
+)
+
+
+# ---------------------------------------------------------------------------
+# Command keys for the duration history
+
+def steps(command):
+    """The recognisable build/test steps of a command, in order."""
+    out = []
+    for m in STEP_RE.finditer(command or ""):
+        s = re.sub(r"\s+", " ", m.group(0)).strip()
+        s = re.sub(r"-destination\s+'[^']*'", "", s)
+        s = re.sub(r"-derivedDataPath\s+\S+", "", s)
+        s = re.sub(r"\s+", " ", s)
+        out.append(s)
+    return out
+
+
+def command_key(command):
+    """One key per kind of command: its steps, or the command with paths blanked."""
+    st = steps(command)
+    if st:
+        return " ; ".join(st)
+    c = re.sub(r"(?:^|&&|;)\s*cd\s+\S+\s*(?:&&|;)", " ", command or "")
+    c = re.sub(r"\d?>>?\s*\S+", "", c)
+    c = re.sub(r"(?:~|/)[^\s'\"]*", "<path>", c)
+    return re.sub(r"\s+", " ", c).strip()[:160]
+
+
+# ---------------------------------------------------------------------------
+# Transcript reading (incremental)
+
+class Transcript:
+    """What one session transcript says about its background tasks."""
+
+    def __init__(self, path):
+        self.path = path
+        self.offset = 0
+        self.uses = {}      # tool_use_id -> {"description", "command", "kind"}
+        self.task_use = {}  # task id -> tool_use_id
+        self.notes = {}     # task id -> last notification status
+        self.pending = {}   # foreground Bash tool_use_id -> description, until its result
+
+    def refresh(self):
+        try:
+            size = os.path.getsize(self.path)
+        except OSError:
+            return
+        if size < self.offset:
+            self.__init__(self.path)
+        if size == self.offset:
+            return
+        with open(self.path, "rb") as f:
+            f.seek(self.offset)
+            data = f.read()
+        end = data.rfind(b"\n")
+        if end < 0:
+            return
+        self.offset += end + 1
+        for raw in data[: end + 1].splitlines():
+            if (b'"Bash"' not in raw and b'"tool_result"' not in raw
+                    and b"run_in_background" not in raw and b'"Agent"' not in raw
+                    and b"background with ID" not in raw and b"agentId:" not in raw
+                    and b"task-notification" not in raw):
+                continue
+            try:
+                self.take(json.loads(raw))
+            except ValueError:
+                continue
+
+    def take(self, rec):
+        msg = rec.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            self.take_text(content)
+            return
+        if not isinstance(content, list):
+            return
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            t = block.get("type")
+            if t == "tool_use":
+                name, inp = block.get("name"), block.get("input") or {}
+                if name == "Bash" and not inp.get("run_in_background"):
+                    self.pending[block.get("id")] = inp.get("description") or "shell command"
+                elif name == "Bash":
+                    self.uses[block.get("id")] = {
+                        "description": inp.get("description") or "",
+                        "command": inp.get("command") or "", "kind": "shell"}
+                elif name == "Agent":
+                    self.uses[block.get("id")] = {
+                        "description": inp.get("description") or "subagent",
+                        "command": "", "kind": "agent"}
+            elif t == "tool_result":
+                text = block.get("content")
+                if isinstance(text, list):
+                    text = " ".join(b.get("text", "") for b in text if isinstance(b, dict))
+                text = text or ""
+                self.pending.pop(block.get("tool_use_id"), None)
+                m = BG_RE.search(text) or AGENT_RE.search(text)
+                if m:
+                    self.task_use[m.group(1)] = block.get("tool_use_id")
+            elif t == "text":
+                self.take_text(block.get("text") or "")
+
+    def take_text(self, text):
+        if "<task-notification>" in text:
+            for m in NOTE_RE.finditer(text):
+                self.notes[m.group(1)] = m.group(2)
+
+    def info(self, task_id):
+        return self.uses.get(self.task_use.get(task_id), {})
+
+
+# ---------------------------------------------------------------------------
+# Task discovery
+
+def tail(path, n=4096):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - n))
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def last_line(text):
+    for line in reversed(text.splitlines()):
+        line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip()
+        if line and not EXIT_RE.match(line):
+            return line
+    return ""
+
+
+def holders(paths):
+    """{path: [pid, ...]} for the files some process has open."""
+    if not paths:
+        return {}
+    try:
+        out = subprocess.run(["lsof", "-F", "pn", "--"] + list(paths),
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    res, pid = {}, None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            res.setdefault(os.path.realpath(line[1:]), []).append(pid)
+    return res
+
+
+class Board:
+    def __init__(self):
+        self.transcripts = {}
+        self.dismissed = set(load_json(DISMISSED, []))
+        self.history = {}   # key -> [(end_time, seconds)]
+        self.seen_done = set()
+
+    def transcript(self, project, session):
+        path = os.path.join(PROJECTS, project, session + ".jsonl")
+        t = self.transcripts.get(path)
+        if t is None:
+            t = self.transcripts[path] = Transcript(path)
+        t.refresh()
+        return t
+
+    def scan(self):
+        now = time.time()
+        files, seen = [], {}
+        for path in sorted(glob.glob(TASK_GLOB), key=lambda p: os.path.islink(p)):
+            real = os.path.realpath(path)
+            try:
+                st = os.stat(real)
+            except OSError:
+                continue
+            if now - st.st_mtime > HISTORY_AGE:
+                continue
+            agent = real.endswith(".jsonl")
+            parts = path.split(os.sep)
+            where = (parts[-4], parts[-3])
+            if real in seen:
+                seen[real][4].append(where)  # the same task, re-linked by a resumed session
+                continue
+            entry = (real, st, agent, st.st_mtime, [where])
+            seen[real] = entry
+            files.append(entry)
+
+        open_candidates = []
+        for path, st, link, mtime, _ in files:
+            if not link:
+                t = tail(path, 200)
+                if not (EXIT_RE.search(t) or "[killed]" in t or DETACHED in t):
+                    open_candidates.append(path)
+        held = holders(open_candidates)
+
+        tasks = []
+        for path, st, link, mtime, places in files:
+            name = os.path.basename(path)
+            task_id = re.sub(r"^agent-|\.(output|jsonl)$", "", name)
+            info, tr = {}, None
+            for project, session in reversed(places):
+                cand = self.transcript(project, session)
+                if tr is None or cand.notes.get(task_id):
+                    tr = cand
+                if not info:
+                    info = cand.info(task_id)
+            project, session = places[-1]
+            start = getattr(st, "st_birthtime", st.st_ctime)
+            task = {"id": task_id, "project": project, "session": session,
+                    "path": path, "start": start, "end": None, "pids": [],
+                    "kind": "agent" if link else "shell",
+                    "description": info.get("description") or task_id,
+                    "command": info.get("command", ""), "detail": ""}
+            if link:
+                note = tr.notes.get(task_id)
+                if note in ("completed",):
+                    task["state"] = "done"
+                elif note in ("failed", "killed", "stopped"):
+                    task["state"] = "failed" if note == "failed" else "killed"
+                elif now - mtime > AGENT_IDLE_STALE:
+                    task["state"] = "stale"
+                else:
+                    task["state"] = "running"
+                if task["state"] != "running":
+                    task["end"] = mtime
+                task["detail"] = agent_detail(path)
+            else:
+                text = tail(path)
+                m = EXIT_RE.search(text)
+                if m:
+                    task["state"] = "done" if m.group(1) == "0" else "failed"
+                    task["code"] = int(m.group(1))
+                    task["end"] = mtime
+                elif "[killed]" in text:
+                    task["state"], task["end"] = "killed", mtime
+                elif DETACHED in text:
+                    task["state"], task["end"] = "done", mtime
+                elif path in held:
+                    task["state"] = "running"
+                    task["pids"] = held[path]
+                else:
+                    task["state"], task["end"] = "stale", mtime
+                task["detail"] = last_line(text)
+                if task["state"] == "done" and task["command"] and task_id not in self.seen_done:
+                    self.seen_done.add(task_id)
+                    self.history.setdefault(command_key(task["command"]), []).append(
+                        (mtime, mtime - start))
+            if task["kind"] == "shell" and not info:
+                if task["state"] == "running" and tr is not None and tr.pending:
+                    task["description"] = list(tr.pending.values())[-1]
+                    task["foreground"] = True
+                elif task["state"] == "running" and now - start < 5:
+                    continue
+                if task["state"] == "running" and now - start < 5:
+                    continue
+            tasks.append(task)
+
+        shown = []
+        for t in tasks:
+            if t["state"] == "running":
+                shown.append(t)
+            elif t["state"] == "stale":
+                if t["id"] not in self.dismissed and now - t["end"] < RECENT:
+                    shown.append(t)
+            elif now - (t["end"] or 0) < DONE_FADE:
+                shown.append(t)
+        shown.sort(key=lambda t: (t["state"] != "running", -t["start"]))
+        return shown
+
+    def estimate(self, command):
+        """Expected seconds for a command, or None."""
+        def median_of(key):
+            runs = sorted(self.history.get(key, []))[-5:]
+            return statistics.median(s for _, s in runs) if runs else None
+        whole = median_of(command_key(command))
+        if whole:
+            return whole
+        parts = steps(command)
+        if len(parts) > 1:
+            meds = [median_of(p) for p in parts]
+            if all(meds):
+                return sum(meds)
+        return None
+
+    def dismiss_stale(self, tasks):
+        for t in tasks:
+            if t["state"] == "stale":
+                self.dismissed.add(t["id"])
+        save_json(DISMISSED, sorted(self.dismissed))
+
+
+def agent_detail(path):
+    """The subagent's latest tool call description, from its transcript."""
+    for line in reversed(tail(path, 65536).splitlines()):
+        if '"tool_use"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        for b in reversed((rec.get("message") or {}).get("content") or []):
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                inp = b.get("input") or {}
+                return inp.get("description") or b.get("name", "")
+    return ""
+
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path, value):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(value, f)
+
+
+# ---------------------------------------------------------------------------
+# Killing
+
+def kill_task(task):
+    """SIGTERM the task's process groups; never Claude's own group."""
+    mine = {os.getpgid(0)}
+    for pid in task["pids"]:
+        try:
+            pgid = os.getpgid(pid)
+            parent_pgid = os.getpgid(int(subprocess.run(
+                ["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True,
+                text=True).stdout.strip() or 1))
+        except (OSError, ValueError):
+            continue
+        if pgid in mine or pgid == parent_pgid:
+            os.kill(pid, signal.SIGTERM)  # shares a group with its parent: just it
+        else:
+            os.killpg(pgid, signal.SIGTERM)
+
+
+# ---------------------------------------------------------------------------
+# Drawing (plain ANSI; colours come from the terminal's palette)
+
+RESET, BOLD, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
+COL = {"running": "\x1b[36m", "done": "\x1b[32m", "failed": "\x1b[31m",
+       "killed": "\x1b[35m", "stale": "\x1b[33m"}
+ICON = {"running": "●", "done": "✔", "failed": "✘", "killed": "■", "stale": "◌"}
+SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def fmt_dur(s):
+    s = int(max(0, s))
+    if s < 60:
+        return "%ds" % s
+    if s < 3600:
+        return "%dm%02ds" % (s // 60, s % 60)
+    return "%dh%02dm" % (s // 3600, (s % 3600) // 60)
+
+
+def clip(text, width):
+    return text if len(text) <= width else text[: max(0, width - 1)] + "…"
+
+
+def project_name(slug):
+    """'-Users-me-repos-Momentum' -> 'Momentum'; the home folder itself -> '~'."""
+    home = os.path.expanduser("~").replace("/", "-")
+    if slug in (home, home + "-"):
+        return "~"
+    return slug.rsplit("-", 1)[-1] or "~"
+
+
+def render(board, tasks, sel, width, height, frame, banner):
+    now = time.time()
+    lines = []
+    running = sum(t["state"] == "running" for t in tasks)
+    stale = sum(t["state"] == "stale" for t in tasks)
+    head = " CLAUDE TASKS "
+    summary = "%d running" % running + (" · %d stale" % stale if stale else "")
+    lines.append(BOLD + REV + clip(head, width) + RESET + " " + DIM + summary + RESET)
+    lines.append(DIM + "─" * width + RESET)
+    if not tasks:
+        lines.append(DIM + " nothing running" + RESET)
+    bar_w = max(8, width - 22)
+    for i, t in enumerate(tasks):
+        c, st = COL[t["state"]], t["state"]
+        icon = SPIN[frame % len(SPIN)] if st == "running" else ICON[st]
+        elapsed = (t["end"] or now) - t["start"]
+        right = fmt_dur(elapsed)
+        title = clip(t["description"], width - len(right) - 4)
+        pad = width - len(title) - len(right) - 3
+        row = " %s %s%s%s" % (icon, title, " " * max(1, pad), right)
+        lines.append((REV if i == sel else "") + c + row + RESET)
+        if st == "running" and t["kind"] == "shell":
+            exp = board.estimate(t["command"])
+            if exp:
+                frac = min(elapsed / exp, 0.99)
+                fill = int(bar_w * frac)
+                left = exp - elapsed
+                tail_txt = ("%3d%% left ~%s" % (round(100 * (1 - frac)), fmt_dur(left))
+                            if left > 0 else " overrunning")
+                lines.append("   " + c + "▓" * fill + DIM + "░" * (bar_w - fill) + RESET
+                             + " " + tail_txt)
+            else:
+                lines.append("   " + DIM + "no history yet · elapsed only" + RESET)
+        elif st == "stale":
+            lines.append("   " + COL["stale"] + "never finished; its shell is gone" + RESET)
+        meta = project_name(t["project"]) + (" · agent" if t["kind"] == "agent" else "") \
+            + (" · foreground" if t.get("foreground") else "")
+        if t["detail"]:
+            meta += " · " + t["detail"]
+        lines.append("   " + DIM + clip(meta, width - 3) + RESET)
+    lines = lines[: height - 2]
+    while len(lines) < height - 2:
+        lines.append("")
+    lines.append(DIM + "─" * width + RESET)
+    lines.append(banner or (DIM + " j/k move  x kill  d clear stale  q close" + RESET))
+    sys.stdout.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in lines) + "\x1b[J")
+    sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# Panel
+
+def panel(auto):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(PIDFILE, "w") as f:
+        f.write(str(os.getpid()))
+    sys.stdout.write("\x1b]0;claude-tasks\x07\x1b[?25l\x1b[?1049h")
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    board, sel, frame = Board(), 0, 0
+    idle_since, confirm, banner = None, None, ""
+    try:
+        tasks = board.scan()
+        next_scan = time.time() + REFRESH
+        while True:
+            size = os.get_terminal_size()
+            sel = max(0, min(sel, len(tasks) - 1))
+            render(board, tasks, sel, size.columns, size.lines, frame, banner)
+            r, _, _ = select.select([sys.stdin], [], [], 0.15)
+            frame += 1
+            if r:
+                ch = os.read(fd, 1).decode(errors="ignore")
+                if confirm is not None:
+                    if ch in "yY":
+                        kill_task(confirm)
+                        banner = COL["killed"] + " sent SIGTERM to " + clip(confirm["description"], 30) + RESET
+                    else:
+                        banner = ""
+                    confirm = None
+                elif ch == "q":
+                    return
+                elif ch in "j\x0e":
+                    sel += 1
+                elif ch in "k\x10":
+                    sel -= 1
+                elif ch == "d":
+                    board.dismiss_stale(tasks)
+                    next_scan = 0
+                elif ch == "x" and tasks:
+                    t = tasks[sel]
+                    if t["state"] != "running":
+                        banner = DIM + " not running" + RESET
+                    elif t["kind"] == "agent":
+                        banner = DIM + " agents stop from Claude (TaskStop)" + RESET
+                    else:
+                        confirm = t
+                        banner = COL["failed"] + BOLD + " kill “%s”? y/n" % clip(t["description"], width_for(size) - 16) + RESET
+            if time.time() >= next_scan:
+                tasks = board.scan()
+                next_scan = time.time() + REFRESH
+                if auto:
+                    if any(t["state"] == "running" for t in tasks):
+                        idle_since = None
+                    elif idle_since is None:
+                        idle_since = time.time()
+                    elif time.time() - idle_since >= GRACE:
+                        return
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\x1b[?1049l\x1b[?25h")
+        sys.stdout.flush()
+        try:
+            if open(PIDFILE).read().strip() == str(os.getpid()):
+                os.remove(PIDFILE)
+        except OSError:
+            pass
+
+
+def width_for(size):
+    return size.columns
+
+
+# ---------------------------------------------------------------------------
+# Hook: open the panel when a background task starts
+
+def panel_alive():
+    try:
+        pid = int(open(PIDFILE).read().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def hook():
+    try:
+        event = json.load(sys.stdin)
+    except ValueError:
+        return
+    name = event.get("tool_name")
+    inp = event.get("tool_input") or {}
+    if name == "Bash" and not inp.get("run_in_background"):
+        return
+    if name not in ("Bash", "Agent"):
+        return
+    pane = os.environ.get("WEZTERM_PANE")
+    if not pane or panel_alive():
+        return
+    wez = next((p for p in ("/opt/homebrew/bin/wezterm", "/usr/local/bin/wezterm",
+                            "/Applications/WezTerm.app/Contents/MacOS/wezterm")
+                if os.path.exists(p)), "wezterm")
+    me = os.path.realpath(__file__)
+    try:
+        subprocess.run([wez, "cli", "split-pane", "--pane-id", pane, "--right",
+                        "--percent", "35", "--", sys.executable, me, "--auto"],
+                       capture_output=True, timeout=5)
+        subprocess.run([wez, "cli", "activate-pane", "--pane-id", pane],
+                       capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def listing():
+    board = Board()
+    for t in board.scan():
+        exp = board.estimate(t["command"]) if t["kind"] == "shell" else None
+        print("%-8s %-6s %-18s %s%s" % (
+            t["state"], t["kind"], t["id"], t["description"],
+            "  (~%s expected)" % fmt_dur(exp) if exp else ""))
+
+
+if __name__ == "__main__":
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg == "--hook":
+        hook()
+    elif arg == "--list":
+        listing()
+    else:
+        panel(auto=(arg == "--auto"))

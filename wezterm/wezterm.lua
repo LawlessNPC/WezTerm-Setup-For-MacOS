@@ -59,6 +59,21 @@ config.set_environment_variables = {
   VISUAL = 'micro',
 }
 
+-- Claude Code task panel. It opens by itself (a PostToolUse hook runs
+-- `claude-tasks --hook`) when Claude starts a background task and closes once
+-- nothing runs; Cmd+Shift+B opens it by hand, and that one stays until q.
+config.keys = {
+  {
+    key = 'B',
+    mods = 'CMD|SHIFT',
+    action = act.SplitPane {
+      direction = 'Right',
+      size = { Percent = 35 },
+      command = { args = { '/usr/bin/python3', home .. '/.config/wezterm/bin/claude-tasks' } },
+    },
+  },
+}
+
 wezterm.on('new-tab-button-click', function(window, pane, button, default_action)
   if button == 'Right' then
     window:perform_action(
