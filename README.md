@@ -131,8 +131,8 @@ It keeps the upstream `@steipete/summarize` CLI available while adding local pol
 
 - Hacker News item URLs such as `https://news.ycombinator.com/item?id=...` are resolved to the linked story before summarizing.
 - Gemini CLI/API usage is refused, even if a command explicitly passes a Gemini model.
-- Auto model selection uses only `cli/claude/sonnet` and `cli/codex/gpt-5.2`.
-- The default summary length is `short`, which avoids the upstream CLI returning raw extracted text for shorter pages.
+- Auto model selection uses only `cli/claude/opus` and `cli/codex/gpt-5.2`.
+- Summaries are asked for as 2 to 4 markdown sections with bullets at `medium` length, which keeps the themed renderer's spacing readable. Pass your own `--prompt` or `--length` to override. Very short pages are still returned as extracted text.
 
 The wrapper runs the real `@steipete/summarize` binary found via `SUMMARIZE_REAL_BIN`, or `/usr/local/bin/summarize` by default. When the CLI installs elsewhere (such as Homebrew's `/opt/homebrew/bin`), `install.sh` writes the correct `SUMMARIZE_REAL_BIN` into `~/.zprofile` automatically.
 
