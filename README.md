@@ -125,7 +125,7 @@ The WezTerm tab bar always stays visible and includes the `+` tab button.
 
 ## Summarize Guard
 
-`install.sh` installs the `summarize` wrapper to `~/.local/bin/summarize`, prepends `~/.local/bin` to your `PATH` in `~/.zprofile`, and `npm install -g`s the upstream `@steipete/summarize` CLI if it is missing.
+`install.sh` installs the `summarize` wrapper to `~/.local/bin/summarize`, prepends `~/.local/bin` to your `PATH` in `~/.zprofile`, and installs the upstream `@steipete/summarize` CLI, or upgrades it to the latest npm release on every re-run.
 
 It keeps the upstream `@steipete/summarize` CLI available while adding local policy:
 
@@ -275,7 +275,7 @@ cp zsh/starship.toml ~/.config/starship.toml
 cp micro/bindings.json ~/.config/micro/bindings.json
 cp -R nvim/. ~/.config/nvim/
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
-npm install -g @steipete/summarize
+npm install -g @steipete/summarize@latest
 ```
 
 Install the shell and tmux plugins:

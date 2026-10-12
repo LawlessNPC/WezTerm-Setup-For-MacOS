@@ -67,14 +67,26 @@ if ! grep -qsF "$path_line" "$zprofile"; then
   echo "Added ~/.local/bin to PATH in ~/.zprofile."
 fi
 
-# Install the upstream @steipete/summarize CLI if it is missing, and point the
-# wrapper at it via SUMMARIZE_REAL_BIN when it is not at the default location.
+# Install or upgrade the upstream @steipete/summarize CLI under npm's current
+# global prefix so it tracks the latest release, and point the wrapper at it
+# via SUMMARIZE_REAL_BIN when it is not at the default location. A stale copy
+# under another prefix (e.g. /usr/local after moving to Homebrew's npm) is
+# left alone but no longer used.
 if command -v npm >/dev/null 2>&1; then
   real_summarize="$(npm prefix -g)/bin/summarize"
-  if [[ ! -x "$real_summarize" && ! -x /usr/local/bin/summarize ]]; then
+  installed_version="$(node -p 'require(process.argv[1]).version' \
+    "$(npm root -g)/@steipete/summarize/package.json" 2>/dev/null || true)"
+  latest_version="$(npm view @steipete/summarize version 2>/dev/null || true)"
+  if [[ ! -x "$real_summarize" || -z "$installed_version" ]]; then
     echo "Installing @steipete/summarize globally..."
-    npm install -g @steipete/summarize \
+    npm install -g @steipete/summarize@latest \
       || echo "warning: @steipete/summarize install failed; install it manually." >&2
+  elif [[ -z "$latest_version" ]]; then
+    echo "warning: could not reach the npm registry; keeping @steipete/summarize $installed_version." >&2
+  elif [[ "$installed_version" != "$latest_version" ]]; then
+    echo "Upgrading @steipete/summarize $installed_version -> $latest_version..."
+    npm install -g @steipete/summarize@latest \
+      || echo "warning: @steipete/summarize upgrade failed; run: npm install -g @steipete/summarize@latest" >&2
   fi
   if [[ -x "$real_summarize" && "$real_summarize" != /usr/local/bin/summarize ]]; then
     real_line="export SUMMARIZE_REAL_BIN=\"$real_summarize\""
