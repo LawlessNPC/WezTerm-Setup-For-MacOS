@@ -307,7 +307,8 @@ def pattern(w, h):
 
 def indexed_png(w, h, pixels, trns=(0,)):
     """A 4bpp indexed PNG built by hand, cycling through all five row filters.
-    tRNS is shorter than the palette, so only index 0 is transparent."""
+    tRNS is shorter than the palette, so only index 0 is transparent; with
+    trns=None there is no tRNS at all, like the Poké Ball sheet."""
     stride = (w + 1) // 2
     raw, prev = b"", bytes(stride)
     for y in range(h):
@@ -325,8 +326,16 @@ def indexed_png(w, h, pixels, trns=(0,)):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
     data = zlib.compress(raw)
     return (ct.PNG_SIG + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 4, 3, 0, 0, 0))
-            + chunk(b"PLTE", bytes(v for rgb in PALETTE for v in rgb)) + chunk(b"tRNS", bytes(trns))
+            + chunk(b"PLTE", bytes(v for rgb in PALETTE for v in rgb))
+            + (chunk(b"tRNS", bytes(trns)) if trns is not None else b"")
             + chunk(b"IDAT", data[:7]) + chunk(b"IDAT", data[7:]) + chunk(b"IEND", b""))
+
+
+def ball_sheet():
+    """A stand-in Poké Ball sheet: 16x48, no tRNS, a filled disc per frame."""
+    px = [[(1 if y < 16 else 2) if (x - 7.5) ** 2 + (y % 16 - 7.5) ** 2 < 36 and y < 32 else 0
+           for x in range(16)] for y in range(48)]
+    return indexed_png(16, 48, px, trns=None)
 
 
 def rgba(index):
@@ -534,8 +543,16 @@ class SpriteLoading(unittest.TestCase):
             f.write(indexed_png(32, 64, pattern(32, 64)))
         return "file://" + self.src + "/%s/icon.png"
 
+    NO_BALL = "file:///nonexistent/ball.png"  # tests never fetch the real one
+
+    def serve_ball(self):
+        path = os.path.join(self.src, "poke.png")
+        with open(path, "wb") as f:
+            f.write(ball_sheet())
+        return "file://" + path
+
     def test_an_icon_loads_in_the_background_and_is_cached_on_disk(self):
-        art = ct.Sprites(self.cache, self.serve())
+        art = ct.Sprites(self.cache, self.serve(), self.NO_BALL)
         art.cell = (13, 29)
         self.assertEqual(art.escape(self.task, 0.0), "")  # not here yet: a blank gap
         deadline = time.time() + 5
@@ -545,12 +562,12 @@ class SpriteLoading(unittest.TestCase):
         self.assertIn("width=65px;height=58px", esc)
         self.assertNotEqual(esc, art.escape(self.task, ct.SPRITE_TICK * 1.5))  # it bobs
         self.assertTrue(os.path.exists(os.path.join(self.cache, "%03d.png" % self.dex)))
-        offline = ct.Sprites(self.cache, "file:///nonexistent/%s.png")
+        offline = ct.Sprites(self.cache, "file:///nonexistent/%s.png", self.NO_BALL)
         offline.load(self.dex)
         self.assertIn(self.dex, offline.frames)  # the second panel reads the cache
 
     def test_a_failed_load_is_no_sprite_and_is_retried_only_later(self):
-        art = ct.Sprites(self.cache, "file:///nonexistent/%s.png")
+        art = ct.Sprites(self.cache, "file:///nonexistent/%s.png", self.NO_BALL)
         art.cell = (13, 29)
         art.load(self.dex)  # raises nothing
         self.assertNotIn(self.dex, art.frames)
@@ -564,6 +581,84 @@ class SpriteLoading(unittest.TestCase):
         with open(os.path.join(self.cache, "%03d.png" % self.dex), "wb") as f:
             f.write(b"\x89PNG truncated")
         self.assertEqual(len(ct.load_icon(self.dex, self.cache, self.serve())), 2)
+
+    def test_the_ball_sheet_loads_with_index_0_clear(self):
+        closed, opened = ct.load_ball(self.cache, self.serve_ball())
+        self.assertEqual((len(closed), len(closed[0]) // 4), (16, 16))
+        self.assertEqual(closed[0][3], 0)                     # a corner: index 0, clear
+        self.assertEqual(closed[8][4 * 8:4 * 8 + 4], rgba(1))  # the disc: opaque
+        self.assertTrue(os.path.exists(os.path.join(self.cache, "ball.png")))
+
+    def test_a_leaving_task_returns_to_its_ball(self):
+        # The background load of the ball fails (NO_BALL), so the test decides
+        # when it arrives.
+        art = ct.Sprites(self.cache, self.serve(), self.NO_BALL)
+        art.cell = (13, 29)
+        art.load(self.dex)
+        done = {"id": self.task["id"], "state": "done", "end": 1000.0}
+        start = done["end"] + ct.DONE_FADE - ct.RECALL_LEAD
+        still = art.escape(done, start - 1)
+        self.assertEqual(art.escape(done, start + 0.01), art.escape(done, start + 0.02))
+        no_ball = art.escape(done, start + 6.5 * ct.SPRITE_TICK)   # ball not loaded yet
+        self.assertNotIn((self.dex, art.cell, ("recall", 6)), art.escapes)  # not kept
+        art.frames[ct.BALL] = ct.load_ball(self.cache, self.serve_ball())
+        with_ball = art.escape(done, start + 6.5 * ct.SPRITE_TICK)
+        self.assertEqual(len({still, art.escape(done, start + 0.01), no_ball, with_ball}), 4)
+        self.assertIn((self.dex, art.cell, ("recall", 6)), art.escapes)
+
+
+class Recall(unittest.TestCase):
+    END = 1000.0
+
+    def at(self, state, seconds_after_end):
+        return ct.recall_step({"state": state, "end": self.END}, self.END + seconds_after_end)
+
+    def test_it_plays_over_the_last_seconds_before_the_row_goes(self):
+        lead = ct.DONE_FADE - ct.RECALL_LEAD
+        self.assertIsNone(self.at("done", lead - 0.01))
+        self.assertEqual(self.at("done", lead + 0.01), 0)
+        self.assertEqual(self.at("failed", lead + 2.5 * ct.SPRITE_TICK), 2)
+        self.assertEqual(self.at("killed", ct.DONE_FADE + 5), len(ct.RECALL) - 1)  # holds
+
+    def test_only_finished_tasks_leave(self):
+        self.assertIsNone(self.at("stale", ct.DONE_FADE))   # stays until cleared
+        self.assertIsNone(ct.recall_step({"state": "running", "end": None}, self.END))
+
+    def test_the_animation_fits_before_the_row_goes(self):
+        self.assertLess(len(ct.RECALL) * ct.SPRITE_TICK, ct.RECALL_LEAD)
+
+    def test_the_pokemon_shrinks_into_the_ball_which_closes(self):
+        mon = [rgba(1) * 10 for _ in range(12)]
+        closed = [rgba(2) * 16 for _ in range(16)]
+        opened = [rgba(3) * 16 for _ in range(16)]
+
+        def colours(step):
+            rows = ct.recall_png(mon, [closed, opened], step, 2, 65, 58)
+            return {bytes(r[i:i + 4]) for r in rows for i in range(0, len(r), 4) if r[i + 3]}
+
+        def area(step):
+            rows = ct.recall_png(mon, None, step, 2, 65, 58)
+            return sum(1 for r in rows for i in range(3, len(r), 4) if r[i])
+
+        self.assertEqual(area(0), 20 * 24)                      # full size, no ball yet
+        self.assertGreater(area(2), area(3))
+        self.assertGreater(area(3), area(4))
+        self.assertNotIn(rgba(1), colours(0))                   # tinted, not its own colour
+        self.assertIn(rgba(3), colours(3))                      # the open ball behind it
+        self.assertEqual(colours(len(ct.RECALL) - 1), {rgba(2)})  # just the closed ball
+        self.assertEqual(area(len(ct.RECALL) - 1), 0)           # and nothing without one
+
+
+class PixelHelpers(unittest.TestCase):
+    def test_resize_tint_over_and_clear(self):
+        rows = [rgba(1) + rgba(2), rgba(3) + rgba(0)]
+        self.assertEqual(ct.png_resize(rows, 4, 4)[3], rgba(3) * 2 + rgba(0) * 2)
+        self.assertEqual(ct.png_tint([rgba(1) + rgba(0)], (255, 255, 255), 1.0),
+                         [b"\xff\xff\xff\xff" + rgba(0)])     # clear pixels stay clear
+        self.assertEqual(ct.png_over([rgba(1) * 2], [rgba(0) + rgba(2)]), [rgba(1) + rgba(2)])
+        w, h, px = ct.png_decode(indexed_png(2, 1, [[0, 1]], trns=None), clear=0)
+        self.assertEqual(px, [rgba(0) + rgba(1)])
+        self.assertEqual(ct.png_place([rgba(1)], 1, 5, 1, dx=9)[0], b"\0" * 16 + rgba(1))
 
 
 if __name__ == "__main__":

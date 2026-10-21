@@ -42,8 +42,9 @@ Where the facts come from:
   `make check` + `make test-watch`), measured from finished tasks' output files.
 
 Each task also gets a Gen 3 Pokémon party-menu icon, picked from its id so it
-stays the same: it bobs while the task runs and stands still once it ends. The
-icons come from pret/pokeemerald, fetched on first use into
+stays the same: it bobs while the task runs, stands still once it ends, and
+returns to its Poké Ball just before the finished task leaves the list. The
+icons (and the ball) come from pret/pokeemerald, fetched on first use into
 ~/.cache/claude-tasks/sprites/ (never into the repo), and are drawn with the
 iTerm2 image protocol. CLAUDE_TASKS_SPRITES=0 turns them off; outside WezTerm
 they are off.
@@ -76,8 +77,10 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 STATE_DIR = os.path.expanduser("~/.local/state/claude-tasks")
 DISMISSED = os.path.join(STATE_DIR, "dismissed.json")
 SPRITE_DIR = os.path.expanduser("~/.cache/claude-tasks/sprites")
-SPRITE_URL = ("https://raw.githubusercontent.com/pret/pokeemerald/"
-              "731ad5bfd6e6f265508d0efcca0ba42f9dcf5881/graphics/pokemon/%s/icon.png")
+POKEEMERALD = ("https://raw.githubusercontent.com/pret/pokeemerald/"
+               "731ad5bfd6e6f265508d0efcca0ba42f9dcf5881/graphics/")
+SPRITE_URL = POKEEMERALD + "pokemon/%s/icon.png"
+BALL_URL = POKEEMERALD + "balls/poke.png"
 
 REFRESH = 2.0            # seconds between redraws
 GRACE = 8.0              # --auto: seconds the final state stays up before shrinking
@@ -99,6 +102,8 @@ SHOWN_W, SHOWN_H = 32, 24  # the most any of the 386 icons draws in, both frames
 SPRITE_TICK = 0.18       # seconds per frame of the bob (the game: ~0.1 at full HP)
 SPRITE_TIMEOUT = 5       # seconds to fetch one icon
 SPRITE_RETRY = 600       # an icon that failed to load is asked for again after this
+BALL_PX = 16             # the Poké Ball sheet is 16x16 frames, stacked
+RECALL_LEAD = 3.0        # a finished task's Pokémon returns to its ball this long before it goes
 
 WEZTERM_BINS = ("/opt/homebrew/bin/wezterm", "/usr/local/bin/wezterm",
                 "/Applications/WezTerm.app/Contents/MacOS/wezterm")
@@ -586,6 +591,27 @@ DEX_NAMES = """
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
+# The return to the ball, a step per SPRITE_TICK over the last RECALL_LEAD
+# seconds before a finished task leaves the list: the Pokémon flashes, turns
+# red and shrinks into the open ball, which closes and wobbles, then rests
+# there until the row goes. Each step is (the Pokémon's size, or 0 once it is
+# in; its tint; the ball's frame, or None; the ball's nudge in ball pixels).
+BALL_CLOSED, BALL_OPEN = 0, 1
+RECALL = (
+    (1.0, "flash", None, 0),
+    (1.0, "red", None, 0),
+    (0.75, "red", BALL_OPEN, 0),
+    (0.5, "red", BALL_OPEN, 0),
+    (0.25, "red", BALL_OPEN, 0),
+    (0, None, BALL_OPEN, 0),
+    (0, None, BALL_CLOSED, 0),
+    (0, None, BALL_CLOSED, -2),
+    (0, None, BALL_CLOSED, 2),
+    (0, None, BALL_CLOSED, 0),
+)
+TINTS = {"flash": ((255, 255, 255), 0.7), "red": ((255, 96, 96), 0.75)}
+BALL = "ball"            # the Sprites key for the ball, beside the dex numbers
+
 
 def sprite_for(task_id):
     """The task's national dex number, 1-386: the same on every redraw and restart."""
@@ -596,6 +622,16 @@ def sprite_frame(task, now):
     """The party-menu bob while running; frame 0, standing still, once it has
     ended, as the game shows a fainted Pokémon."""
     return int(now / SPRITE_TICK) % 2 if task["state"] == "running" else 0
+
+
+def recall_step(task, now):
+    """The step of RECALL to draw, or None while the task isn't leaving. Only
+    finished tasks fade out (a stale one stays until cleared), and the last
+    step holds until the list drops the row."""
+    if task["state"] not in ("done", "failed", "killed") or not task.get("end"):
+        return None
+    t = now - (task["end"] + DONE_FADE - RECALL_LEAD)
+    return None if t < 0 else min(int(t / SPRITE_TICK), len(RECALL) - 1)
 
 
 def sprite_scale(cell_w, cell_h):
@@ -656,10 +692,11 @@ def png_unfilter(raw, h, stride, bpp):
     return lines
 
 
-def png_decode(data):
+def png_decode(data, clear=None):
     """(width, height, rows) of a PNG, each row its pixels as RGBA bytes.
     Covers the party icons (4bpp indexed, high nibble first; tRNS makes index
-    0 transparent and may be shorter than PLTE) and png_encode's 8-bit RGBA."""
+    0 transparent and may be shorter than PLTE) and png_encode's 8-bit RGBA.
+    clear names a palette index to make transparent, for a sheet with no tRNS."""
     if data[:8] != PNG_SIG:
         raise ValueError("not a PNG")
     pos, ihdr, plte, trns, idat = 8, None, b"", b"", []
@@ -691,8 +728,10 @@ def png_decode(data):
     lines = png_unfilter(raw, h, stride, max(1, bits // 8))
     if ctype == 6:
         return w, h, [bytes(line) for line in lines]
-    pal = [plte[i:i + 3] + bytes([trns[i // 3] if i // 3 < len(trns) else 255])
-           for i in range(0, len(plte) - 2, 3)]
+    alpha = [trns[i] if i < len(trns) else 255 for i in range(len(plte) // 3)]
+    if clear is not None and clear < len(alpha):
+        alpha[clear] = 0
+    pal = [plte[3 * i:3 * i + 3] + bytes([a]) for i, a in enumerate(alpha)]
     per, mask = 8 // depth, (1 << depth) - 1
     return w, h, [b"".join(pal[(line[x // per] >> (8 - depth * (x % per + 1))) & mask]
                            for x in range(w)) for line in lines]
@@ -717,13 +756,46 @@ def png_scale(rows, k):
     return out
 
 
-def png_place(rows, k, w, h):
-    """rows enlarged k times and centred on a transparent w x h canvas."""
+def png_place(rows, k, w, h, dx=0):
+    """rows enlarged k times and centred on a transparent w x h canvas,
+    nudged dx pixels sideways."""
     rows = png_scale(rows, k)
     sw = len(rows[0]) // 4
-    left, top = (w - sw) // 2, (h - len(rows)) // 2
+    left, top = max(0, min(w - sw, (w - sw) // 2 + dx)), (h - len(rows)) // 2
     before, after, blank = b"\0" * 4 * left, b"\0" * 4 * (w - sw - left), b"\0" * 4 * w
     return [blank] * top + [before + r + after for r in rows] + [blank] * (h - top - len(rows))
+
+
+def png_resize(rows, w, h):
+    """Nearest-neighbour resize to w x h, for the shrink into the ball."""
+    sw, sh = len(rows[0]) // 4, len(rows)
+    return [b"".join(rows[y * sh // h][4 * (x * sw // w):4 * (x * sw // w) + 4] for x in range(w))
+            for y in range(h)]
+
+
+def png_tint(rows, rgb, amount):
+    """rows with every visible pixel blended that far (0-1) towards rgb."""
+    out = []
+    for row in rows:
+        px = bytearray(row)
+        for i in range(0, len(px), 4):
+            if px[i + 3]:
+                for c in range(3):
+                    px[i + c] += int((rgb[c] - px[i + c]) * amount)
+        out.append(bytes(px))
+    return out
+
+
+def png_over(under, over):
+    """over drawn on top of under, both the same size: its visible pixels win."""
+    out = []
+    for a, b in zip(under, over):
+        row = bytearray(a)
+        for i in range(0, len(b), 4):
+            if b[i + 3]:
+                row[i:i + 4] = b[i:i + 4]
+        out.append(bytes(row))
+    return out
 
 
 def icon_frames(png):
@@ -750,25 +822,61 @@ def icon_crop(frames):
     return [[row[4 * x0:4 * x1] for row in f[y0:y1]] for f in frames]
 
 
-def load_icon(dex, cache=SPRITE_DIR, url=SPRITE_URL):
-    """A species' icon frames: from the disk cache, else fetched once and cached.
+def ball_frames(png):
+    """The Poké Ball sheet's first two frames, 16x16 each: closed, then open."""
+    w, h, rows = png
+    if w != BALL_PX or h < 2 * BALL_PX:
+        raise ValueError("not a ball sheet")
+    return [rows[:BALL_PX], rows[BALL_PX:2 * BALL_PX]]
+
+
+def recall_png(mon, ball, step, k, w, h):
+    """One step of RECALL on a w x h canvas, at scale k. mon is the Pokémon's
+    frame and ball the ball's frames, or None if it couldn't load."""
+    size, tint, ball_frame, nudge = RECALL[step]
+    canvas = [b"\0" * 4 * w] * h
+    if ball is not None and ball_frame is not None:
+        canvas = png_place(ball[ball_frame], k, w, h, nudge * k)
+    if size:
+        rgb, amount = TINTS[tint]
+        sw = max(1, round(len(mon[0]) // 4 * k * size))
+        sh = max(1, round(len(mon) * k * size))
+        mon = png_resize(png_tint(mon, rgb, amount), sw, sh)
+        canvas = png_over(canvas, png_place(mon, 1, w, h))
+    return canvas
+
+
+def cached_png(path, url, decode):
+    """decode(data) of a PNG from the disk cache, else fetched once and cached.
     Raises on any failure; the caller treats that as no sprite."""
-    path = os.path.join(cache, "%03d.png" % dex)
     try:
         with open(path, "rb") as f:
-            return icon_frames(png_decode(f.read()))
+            return decode(f.read())
     except Exception:
         pass  # not cached yet, or damaged: fetch it again
     import urllib.request  # here, so the hooks and --list never load it
-    with urllib.request.urlopen(url % DEX_NAMES[dex - 1], timeout=SPRITE_TIMEOUT) as r:
+    with urllib.request.urlopen(url, timeout=SPRITE_TIMEOUT) as r:
         data = r.read(65536)
-    frames = icon_frames(png_decode(data))  # cache only what decodes
-    os.makedirs(cache, exist_ok=True)
+    result = decode(data)  # cache only what decodes
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "wb") as f:
         f.write(data)
     os.replace(tmp, path)  # whole files only: other tabs' panels read this cache too
-    return frames
+    return result
+
+
+def load_icon(dex, cache=SPRITE_DIR, url=SPRITE_URL):
+    """A species' icon frames, 32x32 each."""
+    return cached_png(os.path.join(cache, "%03d.png" % dex), url % DEX_NAMES[dex - 1],
+                      lambda data: icon_frames(png_decode(data)))
+
+
+def load_ball(cache=SPRITE_DIR, url=BALL_URL):
+    """The Poké Ball's frames. Its sheet has no tRNS: as on the GBA, palette
+    index 0 is the clear one."""
+    return cached_png(os.path.join(cache, "ball.png"), url,
+                      lambda data: ball_frames(png_decode(data, clear=0)))
 
 
 def image_escape(png, w, h):
@@ -780,17 +888,17 @@ def image_escape(png, w, h):
 
 
 class Sprites:
-    """Each task's party icon, ready to draw. Icons load on a background
-    thread (the disk cache, else one fetch), so a repaint never waits: an icon
-    not here yet is a blank gap, and one that failed is asked for again after
-    SPRITE_RETRY."""
+    """Each task's party icon, ready to draw. Icons (and the Poké Ball) load
+    on a background thread (the disk cache, else one fetch), so a repaint
+    never waits: an icon not here yet is a blank gap, and one that failed is
+    asked for again after SPRITE_RETRY."""
 
-    def __init__(self, cache=SPRITE_DIR, url=SPRITE_URL):
-        self.cache, self.url = cache, url
+    def __init__(self, cache=SPRITE_DIR, url=SPRITE_URL, ball_url=BALL_URL):
+        self.cache, self.url, self.ball_url = cache, url, ball_url
         self.cell = (0, 0)   # a cell's pixel size at this repaint
-        self.frames = {}     # dex -> its frames as RGBA rows (written by the thread)
-        self.asked = {}      # dex -> when it was last queued for loading
-        self.escapes = {}    # (dex, cell) -> the image escape for each frame
+        self.frames = {}     # dex (or BALL) -> its frames as RGBA rows (written by the thread)
+        self.asked = {}      # dex (or BALL) -> when it was last queued for loading
+        self.escapes = {}    # (dex, cell, pose) -> the image escape
         self.todo = queue.Queue()
         self.thread = None
 
@@ -805,38 +913,57 @@ class Sprites:
         return sprite_scale(*self.cell) > 0
 
     def escape(self, task, now):
-        """The escape drawing this task's sprite at its current frame, filling
-        the gutter beside its first 2 rows; '' until the icon has loaded."""
+        """The escape drawing this task's sprite as it is now (bobbing,
+        standing still, or returning to its ball), filling the gutter beside
+        its first 2 rows; '' until the icon has loaded."""
         dex = sprite_for(task["id"])
-        key = (dex, self.cell)
-        if key not in self.escapes:
-            frames = self.frames.get(dex)
-            if frames is None:
-                self.want(dex, now)
-                return ""
-            w, h = GUTTER * self.cell[0], 2 * self.cell[1]
-            k = min(sprite_scale(*self.cell), w * 4 // len(frames[0][0]), h // len(frames[0]))
-            self.escapes[key] = [image_escape(png_encode(png_place(f, k, w, h)), w, h)
-                                 for f in frames] if k else [""]
-        esc = self.escapes[key]
-        return esc[sprite_frame(task, now) % len(esc)]
+        frames = self.frames.get(dex)
+        if frames is None:
+            self.want(dex, now)
+            self.want(BALL, now)  # so it's here by the time any task leaves
+            return ""
+        step = recall_step(task, now)
+        pose = ("bob", sprite_frame(task, now)) if step is None else ("recall", step)
+        key = (dex, self.cell, pose)
+        esc = self.escapes.get(key)
+        if esc is None:
+            ball = self.frames.get(BALL)
+            if step is not None and ball is None:
+                self.want(BALL, now)
+            esc = self.draw(frames, pose, ball)
+            if step is None or ball is not None:  # drawn again once the ball loads
+                self.escapes[key] = esc
+        return esc
 
-    def want(self, dex, now):
-        if dex in self.asked and now - self.asked[dex] < SPRITE_RETRY:
+    def draw(self, frames, pose, ball):
+        w, h = GUTTER * self.cell[0], 2 * self.cell[1]
+        k = min(sprite_scale(*self.cell), w * 4 // len(frames[0][0]), h // len(frames[0]))
+        if not k:
+            return ""
+        kind, n = pose
+        rows = (png_place(frames[n % len(frames)], k, w, h) if kind == "bob"
+                else recall_png(frames[0], ball, n, k, w, h))
+        return image_escape(png_encode(rows), w, h)
+
+    def want(self, key, now):
+        if key in self.asked and now - self.asked[key] < SPRITE_RETRY:
             return  # queued already, or failed recently
-        self.asked[dex] = now
+        self.asked[key] = now
         if self.thread is None:
             self.thread = threading.Thread(target=self.work, daemon=True)
             self.thread.start()
-        self.todo.put(dex)
+        self.todo.put(key)
 
     def work(self):
         while True:
             self.load(self.todo.get())
 
-    def load(self, dex):
+    def load(self, key):
         try:
-            self.frames[dex] = icon_crop(load_icon(dex, self.cache, self.url))
+            if key == BALL:
+                self.frames[key] = load_ball(self.cache, self.ball_url)
+            else:
+                self.frames[key] = icon_crop(load_icon(key, self.cache, self.url))
         except Exception:
             pass  # offline, a bad file, anything: no sprite, never a crash
 
