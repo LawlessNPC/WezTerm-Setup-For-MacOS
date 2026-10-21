@@ -35,7 +35,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 - Newsboat, a terminal RSS reader, preconfigured with a matching neon theme, vim-style keys, and a curated feed list. The Hacker News feed uses the official RSS feed, and tmux tears down unattached sessions so closing a WezTerm tab does not leave Newsboat running in the background.
 - A guarded `summarize` wrapper around the `@steipete/summarize` CLI. It resolves Hacker News item links to the source article, blocks Gemini, and limits automatic LLM choices to Claude and Codex.
 - A Claude Code completion chime: a Stop hook plays a quiet "Awaiting Orders" clip when Claude finishes a task, instead of reading the response aloud with TTS.
-- Claude Code's code in its own panel: the fullscreen renderer (`"tui": "fullscreen"`) with focus view (`"viewMode": "focus"`). The chat shows only your last prompt, a one-line summary of each tool call with its diffstat, and the final answer. The code itself shows in Claude Code's diff panel on the right, which opens when Claude edits a file (or with `/diff`). `/focus` toggles focus view for a session and `Ctrl+O` shows full detail. Claude's pane needs 144+ columns for the diff panel, which the [Claude Tasks Panel](#claude-tasks-panel) leaves free.
+- Claude Code's code in its own panel: the fullscreen renderer (`"tui": "fullscreen"`) with focus view (`"viewMode": "focus"`). The chat shows only your last prompt, a one-line summary of each tool call with its diffstat, and the final answer. The code itself shows in Claude Code's diff panel on the right, which opens when Claude edits a file (or with `/diff`). `/focus` toggles focus view for a session and `Ctrl+O` shows full detail. Claude's pane needs 144+ columns for the diff panel, which the [Claude Tasks Panel](#claude-tasks-panel) leaves free. A "Glass" Claude Code theme (`"theme": "custom:glass"`, the Dark theme with one change) paints the diff panel in palette color 235, which the WezTerm glass theme turns translucent; anywhere else it stays Dark's own grey. `"maxProseWidth": 120` wraps Claude's replies at 120 columns, so they stop short of the panel instead of running into it (Claude Code has no padding setting for the panel).
 - A configured zsh shell: a Starship prompt, `eza`-powered `ls`, `zoxide` smart directory jumping, command autosuggestions, and syntax highlighting.
 - Neovim with your Lua config — lazy.nvim plugin manager (version-pinned via `lazy-lock.json`), Treesitter, a file tree, and shared `Ctrl-h/j/k/l` navigation with tmux.
 - A repeatable installer for setting up another MacBook Pro from scratch.
@@ -201,6 +201,7 @@ Config installed:
 ~/.config/starship.toml
 ~/.config/micro/bindings.json
 ~/.config/nvim/
+~/.claude/themes/glass.json
 ```
 
 `install.sh` also appends (never overwrites) to `~/.zprofile`, putting `~/.local/bin` on `PATH` for the `summarize` wrapper.
@@ -282,6 +283,7 @@ cp zsh/zshrc ~/.zshrc
 cp zsh/starship.toml ~/.config/starship.toml
 cp micro/bindings.json ~/.config/micro/bindings.json
 cp -R nvim/. ~/.config/nvim/
+mkdir -p ~/.claude/themes && cp claude/themes/glass.json ~/.claude/themes/  # then set "theme": "custom:glass" and "maxProseWidth": 120 in ~/.claude/settings.json
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
 npm install -g @steipete/summarize@latest
 ```

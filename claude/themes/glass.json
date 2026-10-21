@@ -1,0 +1,7 @@
+{
+  "name": "Glass",
+  "base": "dark",
+  "overrides": {
+    "composerSidebarBackground": "ansi256(235)"
+  }
+}

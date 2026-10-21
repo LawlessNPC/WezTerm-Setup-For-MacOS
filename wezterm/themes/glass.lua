@@ -109,6 +109,13 @@ function M.apply(config)
       '#FFFFFF', -- bright white
     },
 
+    -- Claude Code's diff panel: claude/themes/glass.json paints it in palette
+    -- color 235 (normally #262626, its Dark theme's own grey), so here that
+    -- one grey turns glassy. Colored cells keep their palette alpha.
+    indexed = {
+      [235] = 'rgba(38, 38, 38, 0.7)',
+    },
+
     tab_bar = {
       background = 'rgba(0, 0, 0, 0)',
       -- format-tab-title paints the pills; these cover the new-tab button.
@@ -166,10 +173,15 @@ function M.apply(config)
   config.integrated_title_button_style = 'Windows'
   config.integrated_title_button_alignment = 'Left'
   config.integrated_title_buttons = { 'Close', 'Hide', 'Maximize' }
+  -- A Nerd Font icon followed by a space in the same colors is drawn two
+  -- cells wide, so the spaces after a dot are reset to plain attributes:
+  -- every dot stays one cell, the same size.
   local function light(color, glyph, after)
     return wezterm.format({
       { Foreground = { Color = color } },
-      { Text = ' ' .. glyph .. (after or '') },
+      { Text = ' ' .. glyph },
+      'ResetAttributes',
+      { Text = after or '' },
     })
   end
   config.tab_bar_style = {
@@ -182,6 +194,12 @@ function M.apply(config)
     window_maximize_hover = light(LIGHTS.maximize, DOT_MAX, '  '),
   }
   config.window_padding = { left = 20, right = 20, top = 12, bottom = 10 }
+  -- The tab bar sits right under the window's top border, so a clear one
+  -- keeps the tabs and dots off the top edge.
+  config.window_frame = {
+    border_top_height = '0.35cell',
+    border_top_color  = 'rgba(0, 0, 0, 0)',
+  }
 
   ------------------------------------------------------------------------
   -- Floating pill tabs
