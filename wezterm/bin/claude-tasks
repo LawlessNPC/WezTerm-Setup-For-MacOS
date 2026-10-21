@@ -100,6 +100,7 @@ PANEL_COLS = 60          # the full panel's width on the right
 PANEL_ROWS = 14          # the full panel's height when the window is too narrow
 MIN_CLAUDE_COLS = 150    # Claude's diff panel needs >= 144 columns; keep a margin
 MIN_CLAUDE_ROWS = 10     # rows a panel along the bottom always leaves Claude
+TRIM_WINDOW = 30.0       # seconds a new panel hands back rows it inherited from the one it replaced
 
 GUTTER = 5               # columns left of each task for its sprite (2 rows tall)
 ICON_PX = 32             # a party icon is 32x32 frames, stacked
@@ -1201,6 +1202,7 @@ def panel(mode="manual", claude=None, session=None):
     old = termios.tcgetattr(fd)
     tty.setcbreak(fd)
     board, sel, frame, scans = Board(), 0, 0, 0
+    started = time.time()
     art = Sprites() if sprites_enabled() else None
     show_all = not session
     idle_since, confirm, banner = None, None, ""
@@ -1274,6 +1276,10 @@ def panel(mode="manual", claude=None, session=None):
                 panes = wez_panes()
                 if not docked(panes, claude, me):
                     return  # the Claude pane closed, or WezTerm never placed this panel
+                if mode != "manual" and me and time.time() - started < TRIM_WINDOW:
+                    extra = excess_rows(panes, me, claude, STRIP_ROWS if mode == "strip" else PANEL_ROWS)
+                    if extra:
+                        wez("adjust-pane-size", "--pane-id", str(me), "--amount", str(extra), "Down")
             running = busy(in_scope(everything, session))
             if mode == "strip" and running:
                 if open_panel(claude, "auto", session):
@@ -1359,6 +1365,17 @@ def docked(panes, claude, me):
     """Whether the Claude pane is still open and so is this panel's own pane:
     WezTerm leaves a split's program running with no pane when the split fails."""
     return pane_info(panes, claude) is not None and (not me or pane_info(panes, me) is not None)
+
+
+def excess_rows(panes, me, claude, target):
+    """Rows a panel stacked under the Claude pane holds beyond `target`. When a
+    panel changes shape, WezTerm gives the closing pane's rows to the new panel
+    rather than back to Claude."""
+    mine, theirs = pane_info(panes, me), pane_info(panes, claude)
+    if (not mine or not theirs or mine.get("left_col") != theirs.get("left_col")
+            or mine.get("top_row", 0) <= theirs.get("top_row", 0)):
+        return 0
+    return max(0, (mine.get("size") or {}).get("rows", 0) - target)
 
 
 def pane_for_tty(panes, tty_name):

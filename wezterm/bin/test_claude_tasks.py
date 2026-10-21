@@ -229,6 +229,16 @@ class PanelLayout(unittest.TestCase):
         self.assertFalse(ct.docked(panes, 0, "7"))  # WezTerm never placed it
         self.assertFalse(ct.docked(panes, 5, "3"))  # the Claude pane closed
 
+    def test_a_bottom_panel_hands_back_the_rows_it_inherited(self):
+        panes = [{"pane_id": 0, "left_col": 0, "top_row": 0, "size": {"rows": 13}},
+                 {"pane_id": 3, "left_col": 0, "top_row": 14, "size": {"rows": 20}}]
+        self.assertEqual(ct.excess_rows(panes, "3", 0, ct.STRIP_ROWS), 15)
+
+    def test_a_panel_beside_claude_keeps_its_rows(self):
+        panes = [{"pane_id": 0, "left_col": 0, "top_row": 0, "size": {"rows": 34}},
+                 {"pane_id": 3, "left_col": 141, "top_row": 0, "size": {"rows": 34}}]
+        self.assertEqual(ct.excess_rows(panes, "3", 0, ct.PANEL_ROWS), 0)
+
 
 class Labels(unittest.TestCase):
     def test_project_label_prefers_the_session_folder(self):
