@@ -1,6 +1,6 @@
 -- Liquid Glass theme (dark): a translucent, heavily blurred window that lets
--- the desktop show through, Apple system colors, and floating pill tabs.
--- Pair with ~/.tmux/themes/glass.conf.
+-- the desktop show through, Apple system colors, and floating pill tabs, each
+-- tab in its own color. Pair with ~/.tmux/themes/glass.conf.
 local wezterm = require('wezterm')
 
 local M = {}
@@ -16,9 +16,48 @@ local P = {
   blue      = '#0A84FF',
 }
 
+-- Each tab keeps one of these for its lifetime (picked by tab id, so closing
+-- or moving a tab never recolors the others): its title is drawn in it, and
+-- its pill, while active or hovered, is a deep tint of it.
+local TAB_COLORS = {
+  '#0A84FF', -- blue
+  '#FF9F0A', -- orange
+  '#30D158', -- green
+  '#FF375F', -- pink
+  '#BF5AF2', -- purple
+  '#FFD60A', -- yellow
+  '#64D2FF', -- teal
+  '#66D4CF', -- mint
+}
+
+-- macOS traffic-light colors, for the window buttons drawn in the tab bar.
+local LIGHTS = { close = '#FF5F57', hide = '#FEBC2E', maximize = '#28C840' }
+
 -- Nerd Font half-circle caps that round off each pill.
 local CAP_L = utf8.char(0xe0b6)
 local CAP_R = utf8.char(0xe0b4)
+
+-- Font Awesome circles (Symbols Nerd Font): a plain dot for each window
+-- button, and the dot with its symbol cut out while hovered.
+local DOT       = utf8.char(0xf111)
+local DOT_CLOSE = utf8.char(0xf057)
+local DOT_HIDE  = utf8.char(0xf056)
+local DOT_MAX   = utf8.char(0xf055)
+
+local function tab_color(tab)
+  return TAB_COLORS[tab.tab_id % #TAB_COLORS + 1]
+end
+
+-- hex mixed into the glass base: 0 gives the base, 1 the color itself.
+local function tint(hex, amount)
+  local out = '#'
+  for i = 2, 6, 2 do
+    local base = tonumber(P.surface:sub(i, i + 1), 16)
+    local c = tonumber(hex:sub(i, i + 1), 16)
+    out = out .. string.format('%02X', math.floor(base + (c - base) * amount + 0.5))
+  end
+  return out
+end
 
 function M.apply(config)
   ------------------------------------------------------------------------
@@ -117,15 +156,39 @@ function M.apply(config)
 
   ------------------------------------------------------------------------
   -- Window
+  --   With the native macOS buttons, this tab bar always leaves 10 blank
+  --   cells for them (fixed in WezTerm), a wide gap at this font size. Any
+  --   non-native button style hides them and has WezTerm draw its own, here
+  --   traffic-light dots right before the first tab that show their symbol
+  --   on hover. They close, minimize and maximize the window.
   ------------------------------------------------------------------------
   config.window_decorations = 'INTEGRATED_BUTTONS|RESIZE'
+  config.integrated_title_button_style = 'Windows'
+  config.integrated_title_button_alignment = 'Left'
+  config.integrated_title_buttons = { 'Close', 'Hide', 'Maximize' }
+  local function light(color, glyph, after)
+    return wezterm.format({
+      { Foreground = { Color = color } },
+      { Text = ' ' .. glyph .. (after or '') },
+    })
+  end
+  config.tab_bar_style = {
+    window_close          = light(LIGHTS.close, DOT),
+    window_close_hover    = light(LIGHTS.close, DOT_CLOSE),
+    window_hide           = light(LIGHTS.hide, DOT),
+    window_hide_hover     = light(LIGHTS.hide, DOT_HIDE),
+    -- two spaces after the last dot: the same gap the tabs leave between them
+    window_maximize       = light(LIGHTS.maximize, DOT, '  '),
+    window_maximize_hover = light(LIGHTS.maximize, DOT_MAX, '  '),
+  }
   config.window_padding = { left = 20, right = 20, top = 12, bottom = 10 }
 
   ------------------------------------------------------------------------
   -- Floating pill tabs
   --   The retro tab bar renders format-tab-title verbatim (the fancy one
   --   draws its own tab chrome), so pills are built here from cap glyphs.
-  --   Only the active tab gets a fill; inactive tabs are plain grey text.
+  --   Every tab's title is in its own color; only the active (or hovered)
+  --   tab gets a pill, tinted with that color.
   ------------------------------------------------------------------------
   config.use_fancy_tab_bar = false
   config.tab_max_width = 32
@@ -137,16 +200,17 @@ function M.apply(config)
     end
     title = wezterm.truncate_right(title, max_width - 4)
 
+    local color = tab_color(tab)
     local clear = { Background = { Color = 'rgba(0, 0, 0, 0)' } }
     if not tab.is_active and not hover then
       return {
         clear,
-        { Foreground = { Color = P.secondary } },
+        { Foreground = { Color = color } },
         { Text = '  ' .. title .. '  ' },
       }
     end
 
-    local pill = tab.is_active and P.fill or P.fill_soft
+    local pill = tint(color, tab.is_active and 0.55 or 0.3)
     return {
       clear,
       { Foreground = { Color = pill } },

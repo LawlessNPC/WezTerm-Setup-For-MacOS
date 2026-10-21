@@ -25,7 +25,7 @@ This repo turns a new Mac into the same terminal environment every time: a polis
 ## What You Get
 
 - Two switchable themes, applied to both WezTerm and tmux:
-  - **Liquid Glass** (default) -- a translucent, heavily blurred window that lets the desktop show through, a soft top-edge sheen, Apple dark-mode system colors, SF Mono, floating pill tabs with integrated traffic lights, and a tmux bar of quiet text plus pills (a mode pill that turns blue/orange/yellow/purple for Normal/Prefix/Copy/Zoom).
+  - **Liquid Glass** (default) -- a translucent, heavily blurred window that lets the desktop show through, a soft top-edge sheen, Apple dark-mode system colors, SF Mono, floating pill tabs in a different color per tab (the title in its color, the active tab's pill tinted with it), traffic-light buttons drawn right before the first tab (WezTerm's native ones leave a fixed 10-cell gap), and a tmux bar of quiet text plus pills (a mode pill that turns blue/orange/yellow/purple for Normal/Prefix/Copy/Zoom).
   - **Cyberpunk** -- neon cyan/magenta/yellow accents over a rotating pool of cinematic wallpapers. Each new tab picks a random wallpaper from a shuffled queue and keeps it for the tab's lifetime.
 - SF Mono is loaded straight from Terminal.app (no install needed); VictorMono Nerd Font for the cyberpunk theme; Symbols Nerd Font fallback for pill caps and Powerline glyphs.
 - WezTerm launching straight into tmux so the terminal always has panes, sessions, and status.
