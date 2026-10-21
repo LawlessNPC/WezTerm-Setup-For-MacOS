@@ -204,6 +204,32 @@ class Placement(unittest.TestCase):
                 self.assertGreaterEqual(cols - cells - 1, 144)
 
 
+class PanelLayout(unittest.TestCase):
+    """WezTerm starts a split's program before it finds there is no room, and the
+    program lives on with no pane; and when a panel changes shape, the closing
+    pane's rows go to the new panel instead of back to Claude."""
+
+    def test_a_split_needs_room_to_leave_claude_its_minimum(self):
+        self.assertTrue(ct.room_for({"size": {"rows": 34, "cols": 140}}, "bottom", ct.PANEL_ROWS))
+        self.assertFalse(ct.room_for({"size": {"rows": 13, "cols": 140}}, "bottom", ct.PANEL_ROWS))
+        self.assertTrue(ct.room_for({"size": {"rows": 34, "cols": 261}}, "right", ct.PANEL_COLS))
+
+    def test_no_split_is_attempted_without_room(self):
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state)
+        squeezed = [{"pane_id": 0, "tab_id": 0, "size": {"rows": 13, "cols": 140}}]
+        with mock.patch.object(ct, "STATE_DIR", state), \
+                mock.patch.object(ct, "wez", return_value="7\n") as wez:
+            self.assertIsNone(ct.open_panel(0, "auto", "s1", panes=squeezed))
+        self.assertNotIn("split-pane", [c.args[0] for c in wez.call_args_list if c.args])
+
+    def test_a_panel_whose_own_pane_is_gone_is_not_docked(self):
+        panes = [{"pane_id": 0, "tab_id": 0}, {"pane_id": 3, "tab_id": 0}]
+        self.assertTrue(ct.docked(panes, 0, "3"))
+        self.assertFalse(ct.docked(panes, 0, "7"))  # WezTerm never placed it
+        self.assertFalse(ct.docked(panes, 5, "3"))  # the Claude pane closed
+
+
 class Labels(unittest.TestCase):
     def test_project_label_prefers_the_session_folder(self):
         self.assertEqual(ct.project_label("-Users-me-hilltop-war", "/Users/me/hilltop-war"), "hilltop-war")

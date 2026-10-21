@@ -99,6 +99,7 @@ STRIP_ROWS = 5           # the idle strip under the Claude pane
 PANEL_COLS = 60          # the full panel's width on the right
 PANEL_ROWS = 14          # the full panel's height when the window is too narrow
 MIN_CLAUDE_COLS = 150    # Claude's diff panel needs >= 144 columns; keep a margin
+MIN_CLAUDE_ROWS = 10     # rows a panel along the bottom always leaves Claude
 
 GUTTER = 5               # columns left of each task for its sprite (2 rows tall)
 ICON_PX = 32             # a party icon is 32x32 frames, stacked
@@ -1269,8 +1270,10 @@ def panel(mode="manual", claude=None, session=None):
                 st = load_json(tab_state(tab), {})
                 if str(st.get("pane")) == str(me) and st.get("session") and st.get("session") != session:
                     session, show_all = st.get("session"), False
-            if scans % PANE_CHECK == 0 and pane_info(wez_panes(), claude) is None:
-                return  # the Claude pane closed; take the panel with it
+            if scans % PANE_CHECK == 0:
+                panes = wez_panes()
+                if not docked(panes, claude, me):
+                    return  # the Claude pane closed, or WezTerm never placed this panel
             running = busy(in_scope(everything, session))
             if mode == "strip" and running:
                 if open_panel(claude, "auto", session):
@@ -1352,6 +1355,12 @@ def pane_info(panes, pane_id):
     return None
 
 
+def docked(panes, claude, me):
+    """Whether the Claude pane is still open and so is this panel's own pane:
+    WezTerm leaves a split's program running with no pane when the split fails."""
+    return pane_info(panes, claude) is not None and (not me or pane_info(panes, me) is not None)
+
+
 def pane_for_tty(panes, tty_name):
     for p in panes:
         if tty_name and p.get("tty_name") == tty_name:
@@ -1400,6 +1409,16 @@ def placement(cols, mode):
     return ("bottom", PANEL_ROWS)
 
 
+def room_for(info, direction, cells):
+    """Whether the Claude pane `info` can give `cells` and a divider in
+    `direction` and keep its minimum. Without room the split fails after WezTerm
+    has started the panel, which then runs on with no pane."""
+    size = info.get("size") or {}
+    if direction == "right":
+        return size.get("cols", 0) - cells - 1 >= MIN_CLAUDE_COLS
+    return size.get("rows", 0) - cells - 1 >= MIN_CLAUDE_ROWS
+
+
 def tab_state(tab):
     return os.path.join(STATE_DIR, "tab-%s.json" % tab)
 
@@ -1433,6 +1452,8 @@ def open_panel(claude, mode, session, panes=None):
     if not info:
         return None
     direction, cells = placement((info.get("size") or {}).get("cols", 0), mode)
+    if not room_for(info, direction, cells):
+        return None
     args = ["split-pane", "--pane-id", str(claude), "--" + direction, "--cells", str(cells),
             "--", sys.executable, os.path.realpath(__file__), "--" + mode, "--pane", str(claude)]
     if session:
