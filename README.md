@@ -143,11 +143,13 @@ A panel docked to each Claude Code pane that lists its background shells and sub
 
 It has two shapes and switches between them by itself:
 
-- **Idle strip**: a 5-row strip along the bottom of the Claude pane, opened when a Claude session starts (a `SessionStart` hook runs `claude-tasks --session-start`). It shows the most recent tasks, one line each.
+- **Idle strip**: a 5-row strip along the bottom of the Claude pane, opened when a Claude session starts (a `SessionStart` hook runs `claude-tasks --session-start`). It shows the two most recent tasks beside their sprites, or four, one line each, with sprites off.
 - **Full panel**: when a background shell or subagent starts, the strip widens into the full panel (a `PostToolUse` hook, `claude-tasks --hook`, also opens it if the tab has no panel). About 8 seconds after nothing runs, it shrinks back to the strip.
 - **Keeps Claude Code's diff panel working**: Claude Code shows its diff panel (`/diff`) only when its pane is at least 144 columns wide. The strip takes rows, never columns, and the full panel goes on the right only when Claude keeps 150+ columns. On a narrower window it opens taller along the bottom instead.
 - **One per tab, focused on its session**: the panel follows the Claude session that opened it (`a` toggles every session), and it closes when that Claude pane closes. Inside tmux, the hooks find the right WezTerm pane through the tmux client's tty, not `$WEZTERM_PANE` (which tmux leaves pointing at whichever pane started the tmux server).
 - **`Cmd+Shift+B`** opens it by hand, with the same width rule. That copy stays open until you press `q`.
+- **A Pokémon per task**: each task gets a random Gen 3 party-menu icon, picked from its id, so it keeps the same one across redraws and restarts. It bobs while the task runs and stands still once it ends, as the game shows a fainted Pokémon. The icons are drawn with the iTerm2 image protocol at a whole-number scale that fits two rows. They show only in WezTerm. To turn them off, add `export CLAUDE_TASKS_SPRITES=0` to `~/.zshrc` (the panel inherits Claude's environment).
+- **Sprite cache**: icons are fetched from [pret/pokeemerald](https://github.com/pret/pokeemerald) (a pinned commit) on first use into `~/.cache/claude-tasks/sprites/`. They are never stored in this repo.
 
 | Key | Does |
 | --- | --- |
