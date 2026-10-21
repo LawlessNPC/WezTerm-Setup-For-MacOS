@@ -112,6 +112,32 @@ class TranscriptParsing(unittest.TestCase):
         t.refresh()
         self.assertEqual(t.notes, {"a1": "completed"})
 
+    def test_notifications_queued_while_busy_are_read_too(self):
+        path = self.write([
+            {"type": "queue-operation", "timestamp": "2026-10-21T17:40:10.000Z", "operation": "enqueue",
+             "content": "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"},
+            {"type": "attachment", "timestamp": "2026-10-21T17:41:00.000Z",
+             "attachment": {"type": "queued_command", "prompt":
+                            "<task-notification><task-id>b2</task-id><status>failed</status></task-notification>"}},
+        ])
+        t = ct.Transcript(path)
+        t.refresh()
+        self.assertEqual(t.notes, {"a1": "completed", "b2": "failed"})
+        self.assertEqual(t.note_times["b2"] - t.note_times["a1"], 50)
+
+    def test_notification_and_resume_times_are_recorded(self):
+        path = self.write([
+            {"timestamp": "2026-10-21T17:00:00.000Z", "message": {"content":
+                "<task-notification><task-id>a1</task-id><status>completed</status></task-notification>"}},
+            {"timestamp": "2026-10-21T17:05:00.000Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "s1",
+                 "content": '{"success":true,"resumedAgentId":"a1"}'}]}},
+        ])
+        t = ct.Transcript(path)
+        t.refresh()
+        self.assertEqual(t.notes, {"a1": "completed"})
+        self.assertEqual(t.resumes["a1"] - t.note_times["a1"], 300)
+
     def test_the_session_folder_is_remembered_for_the_project_label(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
             f.write(json.dumps({"cwd": "/Users/me/hilltop-war", "message": {"content": [
@@ -204,6 +230,27 @@ class TerminalSafety(unittest.TestCase):
     def test_agent_activity_is_safe_once_drawn(self):
         block = {"name": "WebFetch", "input": {"url": "https://x.dev/\x1b]52;c;ZXZpbA==\x07"}}
         self.assertIsNone(ct.CONTROL_RE.search(ct.clip(ct.describe_tool(block), 200)))
+
+
+class AgentState(unittest.TestCase):
+    NOTE = 1000.0
+
+    def test_a_finished_agent_stays_done(self):
+        self.assertEqual(ct.agent_state("completed", self.NOTE, None, self.NOTE - 2, self.NOTE + 60), "done")
+
+    def test_a_resumed_agent_is_running_again(self):
+        self.assertEqual(ct.agent_state("completed", self.NOTE, self.NOTE + 30, self.NOTE + 31, self.NOTE + 40), "running")
+
+    def test_log_writes_well_after_the_notification_mean_running(self):
+        late = self.NOTE + ct.RESUME_SLACK + 5
+        self.assertEqual(ct.agent_state("completed", self.NOTE, None, late, late + 1), "running")
+
+    def test_it_is_done_again_once_a_newer_notification_arrives(self):
+        second = self.NOTE + 120
+        self.assertEqual(ct.agent_state("completed", second, self.NOTE + 30, second - 1, second + 5), "done")
+
+    def test_without_a_notification_time_the_note_is_trusted(self):
+        self.assertEqual(ct.agent_state("completed", None, None, self.NOTE + 999, self.NOTE + 1000), "done")
 
 
 class Scope(unittest.TestCase):

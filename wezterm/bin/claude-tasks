@@ -43,6 +43,7 @@ Where the facts come from:
 
 Python 3.9 compatible (the system python3), stdlib only.
 """
+import calendar
 import glob
 import json
 import os
@@ -69,6 +70,7 @@ HISTORY_AGE = 30 * 86400 # finished tasks younger than this feed the estimates
 DONE_FADE = 180          # finished tasks drop off the list after this long
 AGENT_IDLE_STALE = 3600  # an agent with no completion and no writes this long is stale
 PANE_CHECK = 5           # scans between checks that the Claude pane still exists
+RESUME_SLACK = 10        # agent log writes this long after its notification mean it was resumed
 
 STRIP_ROWS = 5           # the idle strip under the Claude pane
 PANEL_COLS = 60          # the full panel's width on the right
@@ -84,6 +86,7 @@ BG_RE = re.compile(r"Command running in background with ID: ([A-Za-z0-9]+)")
 AGENT_RE = re.compile(r"agentId: ([A-Za-z0-9]+)")
 DETACHED = "[process exited while detached"
 NOTE_RE = re.compile(r"<task-id>([A-Za-z0-9]+)</task-id>.*?<status>(\w+)</status>", re.S)
+RESUME_RE = re.compile(r'"resumedAgentId"\s*:\s*"([A-Za-z0-9]+)"')
 STEP_RE = re.compile(
     r"\bmake(?:\s+-C\s+\S+)?\s+[A-Za-z][\w-]*"
     r"|\bxcodebuild\b[^;&|]*?-scheme\s+\S+[^;&|]*?\b(?:test|build|archive)\b"
@@ -131,8 +134,11 @@ class Transcript:
         self.uses = {}      # tool_use_id -> {"description", "command", "kind"}
         self.task_use = {}  # task id -> tool_use_id
         self.notes = {}     # task id -> last notification status
+        self.note_times = {}  # task id -> when that notification arrived (epoch)
+        self.resumes = {}   # agent id -> when the session last resumed it (epoch)
         self.pending = {}   # foreground Bash tool_use_id -> description, until its result
         self.cwd = ""       # the folder the session started in, for its project label
+        self.ts = None      # timestamp of the record being read
 
     def refresh(self):
         try:
@@ -154,7 +160,7 @@ class Transcript:
             if (b'"Bash"' not in raw and b'"tool_result"' not in raw
                     and b"run_in_background" not in raw and b'"Agent"' not in raw
                     and b"background with ID" not in raw and b"agentId:" not in raw
-                    and b"task-notification" not in raw):
+                    and b"task-notification" not in raw and b"resumedAgentId" not in raw):
                 continue
             try:
                 self.take(json.loads(raw))
@@ -164,12 +170,16 @@ class Transcript:
     def take(self, rec):
         if not self.cwd and isinstance(rec.get("cwd"), str):
             self.cwd = rec["cwd"]
+        self.ts = parse_ts(rec.get("timestamp"))
         msg = rec.get("message") or {}
         content = msg.get("content")
         if isinstance(content, str):
             self.take_text(content)
             return
         if not isinstance(content, list):
+            # Notifications that arrive while Claude is busy are stored as queued
+            # commands ("attachment" / "queue-operation" records), not messages.
+            self.take_text(json.dumps(rec, ensure_ascii=False))
             return
         for block in content:
             if not isinstance(block, dict):
@@ -196,6 +206,9 @@ class Transcript:
                 m = BG_RE.search(text) or AGENT_RE.search(text)
                 if m:
                     self.task_use[m.group(1)] = block.get("tool_use_id")
+                r = RESUME_RE.search(text)
+                if r and self.ts is not None:
+                    self.resumes[r.group(1)] = self.ts  # SendMessage woke a finished agent
             elif t == "text":
                 self.take_text(block.get("text") or "")
 
@@ -203,6 +216,8 @@ class Transcript:
         if "<task-notification>" in text:
             for m in NOTE_RE.finditer(text):
                 self.notes[m.group(1)] = m.group(2)
+                if self.ts is not None:
+                    self.note_times[m.group(1)] = self.ts
 
     def info(self, task_id):
         return self.uses.get(self.task_use.get(task_id), {})
@@ -210,6 +225,32 @@ class Transcript:
 
 # ---------------------------------------------------------------------------
 # Task discovery
+
+def parse_ts(ts):
+    """'2026-10-21T17:39:03.123Z' -> epoch seconds, or None."""
+    try:
+        return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError):
+        return None
+
+
+def agent_state(note, note_time, resumed_at, mtime, now):
+    """A subagent's state from its last notification, a later resume, and its log.
+
+    A finished agent can be woken again (SendMessage resumes it); its old
+    notification then no longer applies. That shows as a resume recorded
+    after the notification, or as its log still being written well after it."""
+    if note and note_time is not None:
+        if (resumed_at is not None and resumed_at > note_time) or mtime > note_time + RESUME_SLACK:
+            note = None
+    if note == "completed":
+        return "done"
+    if note in ("failed", "killed", "stopped"):
+        return "failed" if note == "failed" else "killed"
+    if now - mtime > AGENT_IDLE_STALE:
+        return "stale"
+    return "running"
+
 
 def tail(path, n=4096):
     try:
@@ -314,15 +355,8 @@ class Board:
                     "description": info.get("description") or meta.get("description") or task_id,
                     "command": info.get("command", ""), "detail": ""}
             if link:
-                note = tr.notes.get(task_id)
-                if note in ("completed",):
-                    task["state"] = "done"
-                elif note in ("failed", "killed", "stopped"):
-                    task["state"] = "failed" if note == "failed" else "killed"
-                elif now - mtime > AGENT_IDLE_STALE:
-                    task["state"] = "stale"
-                else:
-                    task["state"] = "running"
+                task["state"] = agent_state(tr.notes.get(task_id), tr.note_times.get(task_id),
+                                            tr.resumes.get(task_id), mtime, now)
                 if task["state"] != "running":
                     task["end"] = mtime
                 task["detail"] = agent_detail(path)
