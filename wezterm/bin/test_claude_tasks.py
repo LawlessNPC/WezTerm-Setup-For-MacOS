@@ -157,6 +157,35 @@ class TranscriptParsing(unittest.TestCase):
         self.assertEqual(t.cwd, "/Users/me/hilltop-war")
 
 
+class MovedTranscripts(unittest.TestCase):
+    """Entering a worktree moves a session's transcript into the worktree's
+    project folder, while its task files stay under the original project."""
+
+    NOTE = {"message": {"content": "<task-notification>\n<task-id>aff00</task-id>\n<status>completed</status>"}}
+
+    def setUp(self):
+        self.projects = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.projects)
+        patcher = mock.patch.object(ct, "PROJECTS", self.projects)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write(self, project, session, records):
+        os.makedirs(os.path.join(self.projects, project), exist_ok=True)
+        with open(os.path.join(self.projects, project, session + ".jsonl"), "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+    def test_a_transcript_moved_into_a_worktree_project_is_still_read(self):
+        self.write("-Users-me-repo--claude-worktrees-fix", "s1", [self.NOTE])
+        self.assertEqual(ct.Board().transcript("-Users-me", "s1").notes.get("aff00"), "completed")
+
+    def test_the_task_folders_own_project_is_read_while_it_has_the_transcript(self):
+        self.write("-Users-me", "s1", [self.NOTE])
+        self.write("-Users-me-other", "s1", [])
+        self.assertEqual(ct.Board().transcript("-Users-me", "s1").notes.get("aff00"), "completed")
+
+
 class Placement(unittest.TestCase):
     def test_the_idle_strip_takes_rows_never_columns(self):
         self.assertEqual(ct.placement(120, "strip"), ("bottom", ct.STRIP_ROWS))

@@ -330,6 +330,12 @@ class Board:
 
     def transcript(self, project, session):
         path = os.path.join(PROJECTS, project, session + ".jsonl")
+        if not os.path.exists(path):
+            # Entering a worktree moves the transcript into the worktree's project
+            # folder; the session's task files stay under the project it began in.
+            moved = glob.glob(os.path.join(PROJECTS, "*", session + ".jsonl"))
+            if moved:
+                path = moved[0]
         t = self.transcripts.get(path)
         if t is None:
             t = self.transcripts[path] = Transcript(path)
