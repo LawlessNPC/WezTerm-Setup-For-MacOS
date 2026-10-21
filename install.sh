@@ -127,6 +127,8 @@ if command -v jq >/dev/null 2>&1; then
   [[ -f "$settings" ]] || echo '{}' > "$settings"
   tmp="$(mktemp)"
   jq '.statusLine = {command: "bash ~/.claude/statusline-wrapper.sh", type: "command"}
+    | .tui = "fullscreen"
+    | .viewMode = "focus"
     | .hooks.Stop = [{hooks: [{type: "command", command: "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", async: true}]}]
     | .hooks.PostToolUse = ([(.hooks.PostToolUse // [])[] | select(.matcher != "Bash|Agent")]
         + [{matcher: "Bash|Agent", hooks: [{type: "command", command: "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --hook 2>/dev/null || true", async: true}]}])
@@ -134,10 +136,11 @@ if command -v jq >/dev/null 2>&1; then
           | select([.hooks[]?.command // "" | test("claude-tasks|claude-agents-panel")] | any | not)]
         + [{matcher: "startup|resume", hooks: [{type: "command", command: "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --session-start >/dev/null 2>&1 || true", async: true}]}])' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "Merged statusLine, Stop-hook and task-panel hook blocks into ~/.claude/settings.json."
+  echo "Merged statusLine, fullscreen focus view, Stop-hook and task-panel hook blocks into ~/.claude/settings.json."
 else
   echo "warning: jq not found; add this to ~/.claude/settings.json manually:" >&2
-  echo '  "statusLine": { "command": "bash ~/.claude/statusline-wrapper.sh", "type": "command" }' >&2
+  echo '  "statusLine": { "command": "bash ~/.claude/statusline-wrapper.sh", "type": "command" },' >&2
+  echo '  "tui": "fullscreen", "viewMode": "focus",' >&2
   echo '  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay -v 0.2 \"$HOME/.claude/sounds/task-complete.mp3\" 2>/dev/null || true", "async": true }] }],' >&2
   echo '             "PostToolUse": [{ "matcher": "Bash|Agent", "hooks": [{ "type": "command", "command": "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --hook 2>/dev/null || true", "async": true }] }],' >&2
   echo '             "SessionStart": [{ "matcher": "startup|resume", "hooks": [{ "type": "command", "command": "/usr/bin/python3 \"$HOME/.config/wezterm/bin/claude-tasks\" --session-start >/dev/null 2>&1 || true", "async": true }] }] }' >&2
