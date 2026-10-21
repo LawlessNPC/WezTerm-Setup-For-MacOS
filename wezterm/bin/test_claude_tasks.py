@@ -191,6 +191,21 @@ class AgentActivity(unittest.TestCase):
             os.unlink(f.name)
 
 
+class TerminalSafety(unittest.TestCase):
+    def test_control_sequences_from_transcripts_are_neutralised(self):
+        osc52 = "\x1b]52;c;ZXZpbA==\x07"          # write the clipboard
+        title = "\x1b]0;pwned\x07"                 # retitle the window
+        c1 = "\x9b2J"                               # 8-bit CSI: clear screen
+        for evil in (osc52, title, c1, "a\rb", "x\x00y"):
+            out = ct.clip("Read: " + evil, 200)
+            self.assertIsNone(ct.CONTROL_RE.search(out), repr(out))
+        self.assertEqual(ct.clip("tab\there", 50), "tab here")
+
+    def test_agent_activity_is_safe_once_drawn(self):
+        block = {"name": "WebFetch", "input": {"url": "https://x.dev/\x1b]52;c;ZXZpbA==\x07"}}
+        self.assertIsNone(ct.CONTROL_RE.search(ct.clip(ct.describe_tool(block), 200)))
+
+
 class Scope(unittest.TestCase):
     TASKS = [{"id": "a", "session": "s1"}, {"id": "b", "session": "s2"}]
 

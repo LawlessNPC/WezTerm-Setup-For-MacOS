@@ -495,7 +495,19 @@ def fmt_dur(s):
     return "%dh%02dm" % (s // 3600, (s % 3600) // 60)
 
 
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def safe(text):
+    """Text from transcripts and task output, with every control character
+    (ESC above all) shown as '?', so nothing in it can drive the terminal:
+    retitle the window, plant hyperlinks, or write the clipboard (OSC 52)."""
+    return CONTROL_RE.sub("?", str(text).replace("\t", " "))
+
+
 def clip(text, width):
+    """Every string drawn on screen passes through here, so it is made safe here."""
+    text = safe(text)
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
@@ -924,7 +936,7 @@ def listing():
     for t in board.scan():
         exp = board.estimate(t["command"]) if t["kind"] == "shell" else None
         print("%-8s %-6s %-18s %s%s" % (
-            t["state"], t["kind"], t["id"], t["description"],
+            t["state"], t["kind"], safe(t["id"]), safe(t["description"]),
             "  (~%s expected)" % fmt_dur(exp) if exp else ""))
 
 
