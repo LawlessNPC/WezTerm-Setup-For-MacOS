@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import struct
 import tempfile
 import time
@@ -288,12 +289,60 @@ class FindingTheClaudePane(unittest.TestCase):
     def test_without_tmux_wezterm_pane_is_used_when_it_exists(self):
         self.assertEqual(ct.claude_pane(self.PANES, {"WEZTERM_PANE": "2"}), 2)
 
+    def test_a_background_job_docks_beside_the_focused_pane(self):
+        # Claude's daemon hosts background jobs: their $WEZTERM_PANE is the pane
+        # the daemon started in, not the one the job is being watched from.
+        env = {"CLAUDE_JOB_DIR": "/Users/me/.claude/jobs/abc", "WEZTERM_PANE": "0"}
+        with mock.patch.object(ct, "wez", return_value='[{"focused_pane_id": 2}]'):
+            self.assertEqual(ct.claude_pane(self.PANES, env), 2)
+
+    def test_a_pane_id_from_a_restarted_wezterm_is_not_trusted(self):
+        env = {"WEZTERM_UNIX_SOCKET": "/tmp/claude-tasks-test-gone/gui-sock-1", "WEZTERM_PANE": "0"}
+        with mock.patch.object(ct, "wez", return_value='[{"focused_pane_id": 2}]'):
+            self.assertEqual(ct.claude_pane(self.PANES, env), 2)
+
     def test_parse_args(self):
         self.assertEqual(ct.parse_args([]), {"mode": "manual", "pane": None, "session": None})
         self.assertEqual(ct.parse_args(["--strip", "--pane", "7", "--session", "abc"]),
                          {"mode": "strip", "pane": "7", "session": "abc"})
         self.assertEqual(ct.parse_args(["--auto"])["mode"], "auto")
         self.assertEqual(ct.parse_args(["--session-start"])["mode"], "session-start")
+
+
+class TalkingToWezTerm(unittest.TestCase):
+    """A shell that outlived a WezTerm restart (tmux, or the daemon behind
+    Claude's background jobs) still names the old GUI's socket."""
+
+    def setUp(self):
+        # Unix socket paths are capped near 104 bytes, and macOS's $TMPDIR is long.
+        self.dir = tempfile.mkdtemp(dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = os.path.join(self.dir, "gui-sock-1")
+
+    def test_a_socket_that_is_gone_is_dropped(self):
+        env = ct.cli_env({"WEZTERM_UNIX_SOCKET": self.path, "PATH": "/usr/bin"})
+        self.assertNotIn("WEZTERM_UNIX_SOCKET", env)
+        self.assertEqual(env["PATH"], "/usr/bin")
+
+    def test_a_socket_nobody_listens_on_is_dropped(self):
+        left = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        left.bind(self.path)  # the file a crashed GUI leaves behind
+        left.close()
+        self.assertNotIn("WEZTERM_UNIX_SOCKET", ct.cli_env({"WEZTERM_UNIX_SOCKET": self.path}))
+
+    def test_a_live_socket_is_kept(self):
+        gui = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(gui.close)
+        gui.bind(self.path)
+        gui.listen(1)
+        env = ct.cli_env({"WEZTERM_UNIX_SOCKET": self.path})
+        self.assertEqual(env["WEZTERM_UNIX_SOCKET"], self.path)
+
+    def test_the_cli_runs_without_a_dead_socket(self):
+        with mock.patch.dict(os.environ, {"WEZTERM_UNIX_SOCKET": self.path}), \
+                mock.patch.object(ct.subprocess, "run", return_value=mock.Mock(stdout="[]")) as run:
+            ct.wez("list", "--format", "json")
+        self.assertNotIn("WEZTERM_UNIX_SOCKET", run.call_args.kwargs["env"])
 
 
 # A made-up palette and pattern: no real game image goes in the repo.

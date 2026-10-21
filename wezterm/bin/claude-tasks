@@ -26,7 +26,10 @@ It switches shape on its own, focuses on the Claude session that opened it
 Hooks run in Claude's environment. Inside tmux, $WEZTERM_PANE is whichever
 pane started the tmux server, so the Claude pane is found by mapping
 $TMUX_PANE -> its tmux session's attached client tty -> the WezTerm pane on
-that tty.
+that tty. A background job runs in Claude's daemon, whose $WEZTERM_PANE is the
+pane the daemon started in, and a shell that outlived a WezTerm restart names
+the old GUI's socket and pane; both dock beside the focused pane instead, and
+`wezterm cli` drops a dead socket so it finds the running GUI.
 
 Where the facts come from:
 - Claude Code writes each background shell's output to
@@ -61,6 +64,7 @@ import queue
 import re
 import select
 import signal
+import socket
 import statistics
 import struct
 import subprocess
@@ -1288,11 +1292,41 @@ def first_bin(paths, fallback):
     return next((p for p in paths if os.path.exists(p)), fallback)
 
 
+def socket_alive(path):
+    """Whether anything accepts connections on the unix socket at `path`."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        s.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def stale_socket(env):
+    """Whether $WEZTERM_UNIX_SOCKET names a GUI that is gone: tmux and the daemon
+    behind Claude's background jobs outlive a WezTerm restart and keep the old
+    GUI's socket, which `wezterm cli` then fails on instead of finding the new one."""
+    sock = env.get("WEZTERM_UNIX_SOCKET")
+    return bool(sock) and not socket_alive(sock)
+
+
+def cli_env(env=None):
+    """The environment for `wezterm cli`: without a stale socket, so it finds
+    the running GUI by itself."""
+    env = dict(os.environ if env is None else env)
+    if stale_socket(env):
+        del env["WEZTERM_UNIX_SOCKET"]
+    return env
+
+
 def wez(*args):
     """Run `wezterm cli ...`; stdout, or '' on any failure."""
     try:
         return subprocess.run([first_bin(WEZTERM_BINS, "wezterm"), "cli"] + list(args),
-                              capture_output=True, text=True, timeout=5).stdout
+                              capture_output=True, text=True, timeout=5, env=cli_env()).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -1336,7 +1370,10 @@ def claude_pane(panes, env=None):
             pane = pane_for_tty(panes, t)
             if pane is not None:
                 return pane
-    if env.get("WEZTERM_PANE") and pane_info(panes, env["WEZTERM_PANE"]):
+    # A background job's $WEZTERM_PANE is where Claude's daemon started, and one
+    # beside a stale socket numbers a pane of the old GUI: use the focused pane.
+    trusted = not env.get("CLAUDE_JOB_DIR") and not stale_socket(env)
+    if trusted and env.get("WEZTERM_PANE") and pane_info(panes, env["WEZTERM_PANE"]):
         return int(env["WEZTERM_PANE"])
     try:
         clients = json.loads(wez("list-clients", "--format", "json") or "[]")
