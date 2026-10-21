@@ -59,18 +59,27 @@ config.set_environment_variables = {
   VISUAL = 'micro',
 }
 
--- Claude Code task panel. It opens by itself (a PostToolUse hook runs
--- `claude-tasks --hook`) when Claude starts a background task and closes once
--- nothing runs; Cmd+Shift+B opens it by hand, and that one stays until q.
+-- Claude Code task panel. Hooks dock it to the Claude pane by themselves: an
+-- idle strip along the bottom at session start (`claude-tasks --session-start`)
+-- that widens into the full panel while tasks run (`claude-tasks --hook`).
+-- Cmd+Shift+B opens it by hand, and that one stays until q. Like the hooks, it
+-- only goes on the right when Claude keeps 150+ columns, so Claude Code's diff
+-- panel (which needs 144) keeps opening; otherwise it goes along the bottom.
 config.keys = {
   {
     key = 'B',
     mods = 'CMD|SHIFT',
-    action = act.SplitPane {
-      direction = 'Right',
-      size = { Percent = 35 },
-      command = { args = { '/usr/bin/python3', home .. '/.config/wezterm/bin/claude-tasks' } },
-    },
+    action = wezterm.action_callback(function(_, pane)
+      local right = pane:get_dimensions().cols - 61 >= 150
+      pane:split {
+        direction = right and 'Right' or 'Bottom',
+        size = right and 60 or 14,
+        args = {
+          '/usr/bin/python3', home .. '/.config/wezterm/bin/claude-tasks',
+          '--manual', '--pane', tostring(pane:pane_id()),
+        },
+      }
+    end),
   },
 }
 

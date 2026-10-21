@@ -1,12 +1,32 @@
 #!/usr/bin/env python3
-"""claude-tasks: a WezTerm side panel for Claude Code's background tasks.
+"""claude-tasks: a WezTerm panel for Claude Code's background tasks.
 
-    claude-tasks           the panel; stays open until you press q
-    claude-tasks --auto    the panel; closes itself once nothing is running
-    claude-tasks --hook    PostToolUse hook: opens an --auto panel beside the
-                           Claude pane when a background task starts and no
-                           panel is open
-    claude-tasks --list    one-shot plain listing (for debugging)
+One panel per WezTerm tab, docked to the Claude pane, in two shapes:
+- a compact strip along the bottom while nothing runs (rows only, so Claude's
+  pane keeps its width and the built-in diff panel, which needs >= 144
+  columns, keeps opening), and
+- a full panel while tasks run: on the right when Claude still keeps
+  MIN_CLAUDE_COLS columns, otherwise taller along the bottom.
+It switches shape on its own, focuses on the Claude session that opened it
+(`a` toggles every session), and closes when the Claude pane closes.
+
+    claude-tasks                   the panel, all sessions; stays until q
+    claude-tasks --manual --pane N the same, docked to pane N (Cmd+Shift+B)
+    claude-tasks --strip --pane N  the idle strip; widens into --auto when a
+                                   task starts
+    claude-tasks --auto --pane N   the full panel; shrinks back to the strip
+                                   once nothing is running
+    claude-tasks --session-start   SessionStart hook: opens the strip beside
+                                   the Claude pane if its tab has no panel
+    claude-tasks --hook            PostToolUse hook: opens the full panel when
+                                   a background task starts and the tab has no
+                                   panel (a strip upgrades itself)
+    claude-tasks --list            one-shot plain listing (for debugging)
+
+Hooks run in Claude's environment. Inside tmux, $WEZTERM_PANE is whichever
+pane started the tmux server, so the Claude pane is found by mapping
+$TMUX_PANE -> its tmux session's attached client tty -> the WezTerm pane on
+that tty.
 
 Where the facts come from:
 - Claude Code writes each background shell's output to
@@ -40,15 +60,24 @@ UID = os.getuid()
 TASK_GLOB = "/private/tmp/claude-%d/*/*/tasks/*.output" % UID
 PROJECTS = os.path.expanduser("~/.claude/projects")
 STATE_DIR = os.path.expanduser("~/.local/state/claude-tasks")
-PIDFILE = os.path.join(STATE_DIR, "panel.pid")
 DISMISSED = os.path.join(STATE_DIR, "dismissed.json")
 
 REFRESH = 2.0            # seconds between redraws
-GRACE = 8.0              # --auto: seconds the final state stays up before closing
+GRACE = 8.0              # --auto: seconds the final state stays up before shrinking
 RECENT = 24 * 3600       # finished/stale tasks older than this are not listed
 HISTORY_AGE = 30 * 86400 # finished tasks younger than this feed the estimates
-DONE_FADE = 120          # finished tasks drop off the list after this long
+DONE_FADE = 180          # finished tasks drop off the list after this long
 AGENT_IDLE_STALE = 3600  # an agent with no completion and no writes this long is stale
+PANE_CHECK = 5           # scans between checks that the Claude pane still exists
+
+STRIP_ROWS = 5           # the idle strip under the Claude pane
+PANEL_COLS = 60          # the full panel's width on the right
+PANEL_ROWS = 14          # the full panel's height when the window is too narrow
+MIN_CLAUDE_COLS = 150    # Claude's diff panel needs >= 144 columns; keep a margin
+
+WEZTERM_BINS = ("/opt/homebrew/bin/wezterm", "/usr/local/bin/wezterm",
+                "/Applications/WezTerm.app/Contents/MacOS/wezterm")
+TMUX_BINS = ("/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux")
 
 EXIT_RE = re.compile(r"\[exited with code (-?\d+)\]\s*$")
 BG_RE = re.compile(r"Command running in background with ID: ([A-Za-z0-9]+)")
@@ -103,6 +132,7 @@ class Transcript:
         self.task_use = {}  # task id -> tool_use_id
         self.notes = {}     # task id -> last notification status
         self.pending = {}   # foreground Bash tool_use_id -> description, until its result
+        self.cwd = ""       # the folder the session started in, for its project label
 
     def refresh(self):
         try:
@@ -132,6 +162,8 @@ class Transcript:
                 continue
 
     def take(self, rec):
+        if not self.cwd and isinstance(rec.get("cwd"), str):
+            self.cwd = rec["cwd"]
         msg = rec.get("message") or {}
         content = msg.get("content")
         if isinstance(content, str):
@@ -273,10 +305,13 @@ class Board:
                     info = cand.info(task_id)
             project, session = places[-1]
             start = getattr(st, "st_birthtime", st.st_ctime)
+            meta = agent_meta(path) if link else {}
             task = {"id": task_id, "project": project, "session": session,
+                    "label": project_label(project, tr.cwd if tr else ""),
                     "path": path, "start": start, "end": None, "pids": [],
                     "kind": "agent" if link else "shell",
-                    "description": info.get("description") or task_id,
+                    "agent_type": meta.get("agentType", ""),
+                    "description": info.get("description") or meta.get("description") or task_id,
                     "command": info.get("command", ""), "detail": ""}
             if link:
                 note = tr.notes.get(task_id)
@@ -356,20 +391,54 @@ class Board:
         save_json(DISMISSED, sorted(self.dismissed))
 
 
+DETAIL_KEYS = ("description", "file_path", "command", "url", "pattern", "query", "prompt", "path")
+
+
+def describe_tool(block):
+    """'Read: main.gd', 'WebFetch: https://…', or just the tool name."""
+    name = block.get("name") or "?"
+    inp = block.get("input") or {}
+    for key in DETAIL_KEYS:
+        val = inp.get(key)
+        if isinstance(val, str) and val.strip():
+            val = val.strip().splitlines()[0]
+            if key == "file_path":
+                val = os.path.basename(val)
+            return "%s: %s" % (name, val)
+    return name
+
+
 def agent_detail(path):
-    """The subagent's latest tool call description, from its transcript."""
+    """What the subagent is doing now: its latest tool call, or thinking/writing."""
     for line in reversed(tail(path, 65536).splitlines()):
-        if '"tool_use"' not in line:
+        if '"assistant"' not in line:
             continue
         try:
             rec = json.loads(line)
         except ValueError:
             continue
+        if rec.get("type") != "assistant":
+            continue
         for b in reversed((rec.get("message") or {}).get("content") or []):
-            if isinstance(b, dict) and b.get("type") == "tool_use":
-                inp = b.get("input") or {}
-                return inp.get("description") or b.get("name", "")
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                if "Handback" in (b.get("name") or ""):
+                    return "handed back its report"  # the agent's final act
+                return describe_tool(b)
+            if b.get("type") == "text" and (b.get("text") or "").strip():
+                return "writing: " + b["text"].strip().splitlines()[0]
+            if b.get("type") == "thinking":
+                return "thinking…"
     return ""
+
+
+def agent_meta(path):
+    """The agent's sidecar (agentType, description) next to its transcript."""
+    if not path.endswith(".jsonl"):
+        return {}
+    meta = load_json(path[: -len(".jsonl")] + ".meta.json", {})
+    return meta if isinstance(meta, dict) else {}
 
 
 def load_json(path, default):
@@ -410,6 +479,7 @@ def kill_task(task):
 # Drawing (plain ANSI; colours come from the terminal's palette)
 
 RESET, BOLD, DIM, REV = "\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[7m"
+MAGENTA = "\x1b[35m"
 COL = {"running": "\x1b[36m", "done": "\x1b[32m", "failed": "\x1b[31m",
        "killed": "\x1b[35m", "stale": "\x1b[33m"}
 ICON = {"running": "●", "done": "✔", "failed": "✘", "killed": "■", "stale": "◌"}
@@ -430,21 +500,72 @@ def clip(text, width):
 
 
 def project_name(slug):
-    """'-Users-me-repos-Momentum' -> 'Momentum'; the home folder itself -> '~'."""
+    """'-Users-me-repos-Momentum' -> 'repos-Momentum'; the home folder itself -> '~'.
+
+    The slug flattens '/' to '-', so it can't tell 'hilltop-war' from
+    'hilltop/war'; project_label prefers the session's real folder."""
     home = os.path.expanduser("~").replace("/", "-")
     if slug in (home, home + "-"):
         return "~"
-    return slug.rsplit("-", 1)[-1] or "~"
+    if slug.startswith(home + "-"):
+        return slug[len(home) + 1:]
+    return slug.lstrip("-") or "~"
 
 
-def render(board, tasks, sel, width, height, frame, banner):
-    now = time.time()
-    lines = []
+def project_label(slug, cwd=""):
+    """The session folder's name ('hilltop-war'), else a best guess from the slug."""
+    if cwd:
+        if os.path.realpath(cwd) == os.path.realpath(os.path.expanduser("~")):
+            return "~"
+        return os.path.basename(cwd.rstrip("/")) or "~"
+    return project_name(slug)
+
+
+def clock(epoch, seconds=False):
+    """12-hour wall-clock time: '1:04 PM' (or '1:04:09 PM')."""
+    return time.strftime("%I:%M:%S %p" if seconds else "%I:%M %p",
+                         time.localtime(epoch)).lstrip("0")
+
+
+def in_scope(tasks, session, show_all=False):
+    """The tasks of one Claude session, or every task when show_all/no session."""
+    if show_all or not session:
+        return list(tasks)
+    return [t for t in tasks if t.get("session") == session]
+
+
+def busy(tasks):
+    """Whether background work is running: background shells and subagents.
+    Foreground commands are listed but don't widen or hold open the panel,
+    so it doesn't jump around on every slow command."""
+    return any(t["state"] == "running" and not t.get("foreground") for t in tasks)
+
+
+def when(task, now):
+    """'since 1:03 PM' while running; 'done 1:04 PM' (or failed/killed) after."""
+    if task["state"] == "running":
+        return "since " + clock(task["start"])
+    word = {"done": "done", "failed": "failed", "killed": "killed"}.get(task["state"], "ended")
+    return "%s %s" % (word, clock(task["end"] or now))
+
+
+def header(tasks, width, scope, now):
+    """' CLAUDE TASKS  2 running · this session            1:04 PM'"""
     running = sum(t["state"] == "running" for t in tasks)
     stale = sum(t["state"] == "stale" for t in tasks)
     head = " CLAUDE TASKS "
-    summary = "%d running" % running + (" · %d stale" % stale if stale else "")
-    lines.append(BOLD + REV + clip(head, width) + RESET + " " + DIM + summary + RESET)
+    summary = ("%d running" % running if running else "idle") \
+        + (" · %d stale" % stale if stale else "") + (" · " + scope if scope else "")
+    right = clock(now)
+    summary = clip(summary, max(0, width - len(head) - len(right) - 3))
+    pad = width - len(head) - 1 - len(summary) - len(right)
+    return (BOLD + REV + clip(head, width) + RESET + " " + DIM + summary + RESET
+            + " " * max(1, pad) + DIM + right + RESET)
+
+
+def render(board, tasks, sel, width, height, frame, banner, scope=""):
+    now = time.time()
+    lines = [header(tasks, width, scope, now)]
     lines.append(DIM + "─" * width + RESET)
     if not tasks:
         lines.append(DIM + " nothing running" + RESET)
@@ -472,16 +593,39 @@ def render(board, tasks, sel, width, height, frame, banner):
                 lines.append("   " + DIM + "no history yet · elapsed only" + RESET)
         elif st == "stale":
             lines.append("   " + COL["stale"] + "never finished; its shell is gone" + RESET)
-        meta = project_name(t["project"]) + (" · agent" if t["kind"] == "agent" else "") \
-            + (" · foreground" if t.get("foreground") else "")
-        if t["detail"]:
-            meta += " · " + t["detail"]
+        kind = (t.get("agent_type") or "agent") if t["kind"] == "agent" else ""
+        meta = " · ".join(p for p in (t.get("label") or project_name(t["project"]), kind,
+                                      "foreground" if t.get("foreground") else "",
+                                      when(t, now)) if p)
         lines.append("   " + DIM + clip(meta, width - 3) + RESET)
+        if t["detail"]:
+            act = MAGENTA if st == "running" and t["kind"] == "agent" else DIM
+            lines.append("   " + act + "↳ " + clip(t["detail"], width - 5) + RESET)
     lines = lines[: height - 2]
     while len(lines) < height - 2:
         lines.append("")
     lines.append(DIM + "─" * width + RESET)
-    lines.append(banner or (DIM + " j/k move  x kill  d clear stale  q close" + RESET))
+    lines.append(banner or (DIM + clip(" j/k move  x kill  d clear stale  a all/this  q close", width) + RESET))
+    sys.stdout.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in lines) + "\x1b[J")
+    sys.stdout.flush()
+
+
+def render_strip(tasks, width, height, frame, scope=""):
+    """The idle strip: a header and the most recent tasks, one line each."""
+    now = time.time()
+    lines = [header(tasks, width, scope, now)]
+    if not tasks:
+        lines.append(DIM + clip(" nothing running · this widens into the full panel while tasks run", width) + RESET)
+    for t in tasks[: max(0, height - 1)]:
+        st = t["state"]
+        icon = SPIN[frame % len(SPIN)] if st == "running" else ICON[st]
+        right = "%s · %s" % (when(t, now), fmt_dur((t["end"] or now) - t["start"]))
+        title = clip(t["description"], max(0, width - len(right) - 5))
+        pad = width - len(title) - len(right) - 3
+        lines.append(COL[st] + " %s %s%s" % (icon, title, " " * max(1, pad)) + DIM + right + RESET)
+    lines = lines[:height]
+    while len(lines) < height:
+        lines.append("")
     sys.stdout.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in lines) + "\x1b[J")
     sys.stdout.flush()
 
@@ -489,23 +633,38 @@ def render(board, tasks, sel, width, height, frame, banner):
 # ---------------------------------------------------------------------------
 # Panel
 
-def panel(auto):
+def panel(mode="manual", claude=None, session=None):
+    """The panel loop. mode: 'manual' (stays until q), 'auto' (full panel that
+    shrinks back to the strip when idle) or 'strip' (idle strip that widens
+    into 'auto' when a task starts). claude: the Claude pane it is docked to."""
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(PIDFILE, "w") as f:
-        f.write(str(os.getpid()))
-    sys.stdout.write("\x1b]0;claude-tasks\x07\x1b[?25l\x1b[?1049h")
+    me = os.environ.get("WEZTERM_PANE")
+    tab = None
+    if claude is not None:
+        info = pane_info(wez_panes(), claude)
+        tab = info.get("tab_id") if info else None
+        if tab is not None and me:
+            register(tab, me, claude, session, mode)
+    title = "claude-tasks" if mode != "strip" else "claude-tasks strip"
+    sys.stdout.write("\x1b]0;%s\x07\x1b[?25l\x1b[?1049h" % title)
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setcbreak(fd)
-    board, sel, frame = Board(), 0, 0
+    board, sel, frame, scans = Board(), 0, 0, 0
+    show_all = not session
     idle_since, confirm, banner = None, None, ""
     try:
-        tasks = board.scan()
+        everything = board.scan()
         next_scan = time.time() + REFRESH
         while True:
+            tasks = in_scope(everything, session, show_all)
+            scope = "" if not session else ("all sessions" if show_all else "this session")
             size = os.get_terminal_size()
             sel = max(0, min(sel, len(tasks) - 1))
-            render(board, tasks, sel, size.columns, size.lines, frame, banner)
+            if mode == "strip":
+                render_strip(tasks, size.columns, size.lines, frame, scope)
+            else:
+                render(board, tasks, sel, size.columns, size.lines, frame, banner, scope)
             r, _, _ = select.select([sys.stdin], [], [], 0.15)
             frame += 1
             if r:
@@ -519,6 +678,8 @@ def panel(auto):
                     confirm = None
                 elif ch == "q":
                     return
+                elif ch == "a" and session:
+                    show_all = not show_all
                 elif ch in "j\x0e":
                     sel += 1
                 elif ch in "k\x10":
@@ -534,70 +695,228 @@ def panel(auto):
                         banner = DIM + " agents stop from Claude (TaskStop)" + RESET
                     else:
                         confirm = t
-                        banner = COL["failed"] + BOLD + " kill “%s”? y/n" % clip(t["description"], width_for(size) - 16) + RESET
-            if time.time() >= next_scan:
-                tasks = board.scan()
-                next_scan = time.time() + REFRESH
-                if auto:
-                    if any(t["state"] == "running" for t in tasks):
+                        banner = COL["failed"] + BOLD + " kill “%s”? y/n" % clip(t["description"], size.columns - 16) + RESET
+            if time.time() < next_scan:
+                continue
+            everything = board.scan()
+            next_scan = time.time() + REFRESH
+            scans += 1
+            if claude is None:
+                # Undocked (plain --auto): close once idle, as before.
+                if mode == "auto":
+                    if busy(in_scope(everything, session)):
                         idle_since = None
                     elif idle_since is None:
                         idle_since = time.time()
                     elif time.time() - idle_since >= GRACE:
                         return
+                continue
+            if tab is not None and me:
+                # A resumed or new Claude session in this tab re-targets the panel.
+                st = load_json(tab_state(tab), {})
+                if str(st.get("pane")) == str(me) and st.get("session") and st.get("session") != session:
+                    session, show_all = st.get("session"), False
+            if scans % PANE_CHECK == 0 and pane_info(wez_panes(), claude) is None:
+                return  # the Claude pane closed; take the panel with it
+            running = busy(in_scope(everything, session))
+            if mode == "strip" and running:
+                if open_panel(claude, "auto", session):
+                    return  # the full panel took over
+            elif mode == "auto":
+                if running:
+                    idle_since = None
+                elif idle_since is None:
+                    idle_since = time.time()
+                elif time.time() - idle_since >= GRACE:
+                    open_panel(claude, "strip", session)
+                    return
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         sys.stdout.write("\x1b[?1049l\x1b[?25h")
         sys.stdout.flush()
+        if tab is not None and me:
+            unregister(tab, me)
+
+
+# ---------------------------------------------------------------------------
+# WezTerm: finding the Claude pane, placing and tracking the panel
+
+def first_bin(paths, fallback):
+    return next((p for p in paths if os.path.exists(p)), fallback)
+
+
+def wez(*args):
+    """Run `wezterm cli ...`; stdout, or '' on any failure."""
+    try:
+        return subprocess.run([first_bin(WEZTERM_BINS, "wezterm"), "cli"] + list(args),
+                              capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def wez_panes():
+    try:
+        panes = json.loads(wez("list", "--format", "json") or "[]")
+    except ValueError:
+        return []
+    return panes if isinstance(panes, list) else []
+
+
+def pane_info(panes, pane_id):
+    for p in panes:
+        if str(p.get("pane_id")) == str(pane_id):
+            return p
+    return None
+
+
+def pane_for_tty(panes, tty_name):
+    for p in panes:
+        if tty_name and p.get("tty_name") == tty_name:
+            return p.get("pane_id")
+    return None
+
+
+def claude_pane(panes, env=None):
+    """The WezTerm pane showing this Claude session (hooks run in its environment)."""
+    env = os.environ if env is None else env
+    if env.get("TMUX_PANE"):
+        tmux = first_bin(TMUX_BINS, "tmux")
         try:
-            if open(PIDFILE).read().strip() == str(os.getpid()):
-                os.remove(PIDFILE)
+            session = subprocess.run([tmux, "display-message", "-p", "-t", env["TMUX_PANE"],
+                                      "#{session_name}"], capture_output=True, text=True,
+                                     timeout=5).stdout.strip()
+            ttys = subprocess.run([tmux, "list-clients", "-t", session, "-F", "#{client_tty}"],
+                                  capture_output=True, text=True, timeout=5).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            ttys = []
+        for t in ttys:
+            pane = pane_for_tty(panes, t)
+            if pane is not None:
+                return pane
+    if env.get("WEZTERM_PANE") and pane_info(panes, env["WEZTERM_PANE"]):
+        return int(env["WEZTERM_PANE"])
+    try:
+        clients = json.loads(wez("list-clients", "--format", "json") or "[]")
+        return clients[0].get("focused_pane_id") if clients else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def placement(cols, mode):
+    """(direction, cells) for a panel beside a Claude pane `cols` wide.
+
+    The strip and the narrow-window panel take rows, never columns, so Claude
+    keeps its width and its diff panel (>= 144 columns) keeps opening."""
+    if mode == "strip":
+        return ("bottom", STRIP_ROWS)
+    if cols - PANEL_COLS - 1 >= MIN_CLAUDE_COLS:
+        return ("right", PANEL_COLS)
+    return ("bottom", PANEL_ROWS)
+
+
+def tab_state(tab):
+    return os.path.join(STATE_DIR, "tab-%s.json" % tab)
+
+
+def register(tab, pane, claude, session, mode):
+    save_json(tab_state(tab), {"pane": int(pane), "claude_pane": int(claude),
+                               "session": session or "", "mode": mode})
+
+
+def unregister(tab, pane):
+    """Forget this tab's panel, unless another panel already took over."""
+    st = load_json(tab_state(tab), {})
+    if str(st.get("pane")) == str(pane):
+        try:
+            os.remove(tab_state(tab))
         except OSError:
             pass
 
 
-def width_for(size):
-    return size.columns
+def live_panel(panes, tab):
+    """This tab's registered panel, if its pane still exists in the tab."""
+    st = load_json(tab_state(tab), {})
+    info = pane_info(panes, st.get("pane"))
+    return st if info and info.get("tab_id") == tab else None
+
+
+def open_panel(claude, mode, session, panes=None):
+    """Split a panel off the Claude pane; returns its pane id, or None."""
+    panes = wez_panes() if panes is None else panes
+    info = pane_info(panes, claude)
+    if not info:
+        return None
+    direction, cells = placement((info.get("size") or {}).get("cols", 0), mode)
+    args = ["split-pane", "--pane-id", str(claude), "--" + direction, "--cells", str(cells),
+            "--", sys.executable, os.path.realpath(__file__), "--" + mode, "--pane", str(claude)]
+    if session:
+        args += ["--session", session]
+    new = wez(*args).strip()
+    if not new.isdigit():
+        return None
+    register(info.get("tab_id"), new, claude, session, mode)  # claim the tab before it starts
+    wez("activate-pane", "--pane-id", str(claude))
+    return int(new)
 
 
 # ---------------------------------------------------------------------------
-# Hook: open the panel when a background task starts
+# Hooks
 
-def panel_alive():
-    try:
-        pid = int(open(PIDFILE).read().strip())
-        os.kill(pid, 0)
-        return True
-    except (OSError, ValueError):
-        return False
-
-
-def hook():
+def read_event():
     try:
         event = json.load(sys.stdin)
     except ValueError:
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def dock(event, mode):
+    """Open `mode` beside this session's Claude pane unless its tab has a panel.
+    A panel already there is pointed at this session instead."""
+    panes = wez_panes()
+    claude = claude_pane(panes)
+    info = pane_info(panes, claude) if claude is not None else None
+    if not info:
         return
+    session = event.get("session_id") or ""
+    st = live_panel(panes, info.get("tab_id"))
+    if st:
+        if session and st.get("session") != session:
+            st["session"] = session
+            save_json(tab_state(info.get("tab_id")), st)
+        return  # an idle strip widens by itself within a couple of seconds
+    open_panel(claude, mode, session, panes)
+
+
+def hook():
+    """PostToolUse: a background shell or subagent just started."""
+    event = read_event()
     name = event.get("tool_name")
     inp = event.get("tool_input") or {}
     if name == "Bash" and not inp.get("run_in_background"):
         return
     if name not in ("Bash", "Agent"):
         return
-    pane = os.environ.get("WEZTERM_PANE")
-    if not pane or panel_alive():
-        return
-    wez = next((p for p in ("/opt/homebrew/bin/wezterm", "/usr/local/bin/wezterm",
-                            "/Applications/WezTerm.app/Contents/MacOS/wezterm")
-                if os.path.exists(p)), "wezterm")
-    me = os.path.realpath(__file__)
-    try:
-        subprocess.run([wez, "cli", "split-pane", "--pane-id", pane, "--right",
-                        "--percent", "35", "--", sys.executable, me, "--auto"],
-                       capture_output=True, timeout=5)
-        subprocess.run([wez, "cli", "activate-pane", "--pane-id", pane],
-                       capture_output=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    dock(event, "auto")
+
+
+def session_start():
+    """SessionStart: dock the idle strip under the Claude pane."""
+    dock(read_event(), "strip")
+
+
+def parse_args(argv):
+    opts = {"mode": "manual", "pane": None, "session": None}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--auto", "--strip", "--manual", "--hook", "--session-start", "--list"):
+            opts["mode"] = a[2:]
+        elif a in ("--pane", "--session") and i + 1 < len(argv):
+            opts[a[2:]] = argv[i + 1]
+            i += 1
+        i += 1
+    return opts
 
 
 def listing():
@@ -610,10 +929,12 @@ def listing():
 
 
 if __name__ == "__main__":
-    arg = sys.argv[1] if len(sys.argv) > 1 else ""
-    if arg == "--hook":
+    opts = parse_args(sys.argv[1:])
+    if opts["mode"] == "hook":
         hook()
-    elif arg == "--list":
+    elif opts["mode"] == "session-start":
+        session_start()
+    elif opts["mode"] == "list":
         listing()
     else:
-        panel(auto=(arg == "--auto"))
+        panel(opts["mode"], opts["pane"], opts["session"])

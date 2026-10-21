@@ -19,11 +19,11 @@ There is no build, lint, or test suite.
 
 **install.sh is the authoritative map of where files land.** Repo path → live path is not 1:1 (`tmux/tmux.conf` → `~/.tmux.conf`, `zsh/zshrc` → `~/.zshrc`, `claude/*.sh` → `~/.claude/`). Adding or moving a config file means updating `install.sh` *and* the hand-maintained "Installed Pieces" / "Manual Install" sections of README.md.
 
-**Append and merge, never clobber.** install.sh appends to `~/.zprofile` behind grep guards, and merges into `~/.claude/settings.json` with jq (only `.statusLine` and `.hooks.Stop`), so unrelated user settings survive re-runs. Follow the same pattern for any new settings integration.
+**Append and merge, never clobber.** install.sh appends to `~/.zprofile` behind grep guards, and merges into `~/.claude/settings.json` with jq (only `.statusLine`, `.hooks.Stop`, and the task-panel entries in `.hooks.PostToolUse` and `.hooks.SessionStart`, replacing earlier copies of those entries and keeping every other hook), so unrelated user settings survive re-runs. Follow the same pattern for any new settings integration.
 
 **summarize interception chain.** `summarize/summarize` is a policy wrapper installed to `~/.local/bin/summarize`, which install.sh puts first in PATH. It resolves Hacker News item links to the source article, hard-blocks Gemini, and restricts auto model selection, then execs the real `@steipete/summarize` binary found via `SUMMARIZE_REAL_BIN` (written to `~/.zprofile` when npm's global prefix isn't `/usr/local/bin`).
 
-**Claude Code integration.** `claude/statusline-wrapper.sh` combines git info from `statusline-command.sh` with context output from `ccstatusline` (widget config in `ccstatusline/settings.json`, resolved via PATH). `claude/sounds/task-complete.mp3` plays from an async Stop hook (`afplay -v 0.2`) instead of TTS.
+**Claude Code integration.** `claude/statusline-wrapper.sh` combines git info from `statusline-command.sh` with context output from `ccstatusline` (widget config in `ccstatusline/settings.json`, resolved via PATH). `claude/sounds/task-complete.mp3` plays from an async Stop hook (`afplay -v 0.2`) instead of TTS. `wezterm/bin/claude-tasks` is the task panel docked to each Claude pane: an idle strip opened by an async SessionStart hook that widens into the full panel when a PostToolUse hook (or the strip itself) sees a background shell or subagent start. Never let it take columns that drop Claude's pane below 150: Claude Code's diff panel needs 144. Tests: `python3 -m unittest wezterm/bin/test_claude_tasks.py`.
 
 **Neovim plugins are version-pinned** via `nvim/lazy-lock.json`; commit lockfile changes deliberately.
 

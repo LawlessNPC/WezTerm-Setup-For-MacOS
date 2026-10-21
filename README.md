@@ -138,20 +138,25 @@ The wrapper runs the real `@steipete/summarize` binary found via `SUMMARIZE_REAL
 
 ## Claude Tasks Panel
 
-A side pane listing Claude Code's background shells and subagents across every session, with how long each has run, its last line of output, and for builds and tests a bar with **% left and an ETA**. The estimate is the median of the last five successful runs of the same command (`make check`, `make test-watch`, …), measured from Claude's own task files. A command with no history shows elapsed time only.
+A panel docked to each Claude Code pane that lists its background shells and subagents: how long each has run, when it started or finished (12-hour clock), its last line of output, what each subagent is doing right now (`Read: main.gd`, `WebFetch: …`, `thinking…`) and its agent type, and for builds and tests a bar with **% left and an ETA**. The estimate is the median of the last five successful runs of the same command (`make check`, `make test-watch`, …), measured from Claude's own task files. A command with no history shows elapsed time only.
 
-- **Opens by itself**: a `PostToolUse` hook (`claude-tasks --hook`) splits it to the right of the Claude pane when a background task starts and no panel is open.
-- **Closes by itself**: about 8 seconds after nothing is running.
-- **`Cmd+Shift+B`** opens it by hand. That copy stays open until you press `q`.
+It has two shapes and switches between them by itself:
+
+- **Idle strip**: a 5-row strip along the bottom of the Claude pane, opened when a Claude session starts (a `SessionStart` hook runs `claude-tasks --session-start`). It shows the most recent tasks, one line each.
+- **Full panel**: when a background shell or subagent starts, the strip widens into the full panel (a `PostToolUse` hook, `claude-tasks --hook`, also opens it if the tab has no panel). About 8 seconds after nothing runs, it shrinks back to the strip.
+- **Keeps Claude Code's diff panel working**: Claude Code shows its diff panel (`/diff`) only when its pane is at least 144 columns wide. The strip takes rows, never columns, and the full panel goes on the right only when Claude keeps 150+ columns. On a narrower window it opens taller along the bottom instead.
+- **One per tab, focused on its session**: the panel follows the Claude session that opened it (`a` toggles every session), and it closes when that Claude pane closes. Inside tmux, the hooks find the right WezTerm pane through the tmux client's tty, not `$WEZTERM_PANE` (which tmux leaves pointing at whichever pane started the tmux server).
+- **`Cmd+Shift+B`** opens it by hand, with the same width rule. That copy stays open until you press `q`.
 
 | Key | Does |
 | --- | --- |
 | `j` / `k` | Move the selection |
 | `x` | Kill the selected shell (asks `y/n`; agents are stopped from Claude) |
 | `d` | Clear stale rows: tasks whose shell died without finishing |
+| `a` | Switch between this session and every session |
 | `q` | Close the panel |
 
-Long foreground commands (5 seconds or more) show too, marked `foreground`. `claude-tasks --list` prints the same thing once, for debugging. The tests are in `wezterm/bin/test_claude_tasks.py` (`python3 -m unittest wezterm/bin/test_claude_tasks.py`).
+Finished tasks stay listed for 3 minutes. Long foreground commands (5 seconds or more) show too, marked `foreground`, but don't widen the strip. `claude-tasks --list` prints the same thing once, for debugging. The tests are in `wezterm/bin/test_claude_tasks.py` (`python3 -m unittest wezterm/bin/test_claude_tasks.py`).
 
 ## Installed Pieces
 
