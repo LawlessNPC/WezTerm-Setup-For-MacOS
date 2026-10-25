@@ -26,10 +26,13 @@ It switches shape on its own, focuses on the Claude session that opened it
 Hooks run in Claude's environment. Inside tmux, $WEZTERM_PANE is whichever
 pane started the tmux server, so the Claude pane is found by mapping
 $TMUX_PANE -> its tmux session's attached client tty -> the WezTerm pane on
-that tty. A background job runs in Claude's daemon, whose $WEZTERM_PANE is the
-pane the daemon started in, and a shell that outlived a WezTerm restart names
-the old GUI's socket and pane; both dock beside the focused pane instead, and
-`wezterm cli` drops a dead socket so it finds the running GUI.
+that tty. A background session runs in Claude's daemon, whose $WEZTERM_PANE and
+$TMUX_PANE name wherever the daemon started; the agent view showing it titles
+its terminal with the session's name, so its panel docks beside the pane (or
+tmux pane) with that title. A shell that outlived a WezTerm restart names the
+old GUI's socket and pane: `wezterm cli` drops a dead socket so it finds the
+running GUI, and the old pane id is ignored. When the pane cannot be told, no
+panel opens: the focused pane is whichever tab the owner is reading.
 
 Where the facts come from:
 - Claude Code writes each background shell's output to
@@ -1385,33 +1388,73 @@ def pane_for_tty(panes, tty_name):
     return None
 
 
-def claude_pane(panes, env=None):
-    """The WezTerm pane showing this Claude session (hooks run in its environment)."""
-    env = os.environ if env is None else env
-    if env.get("TMUX_PANE"):
-        tmux = first_bin(TMUX_BINS, "tmux")
-        try:
-            session = subprocess.run([tmux, "display-message", "-p", "-t", env["TMUX_PANE"],
-                                      "#{session_name}"], capture_output=True, text=True,
-                                     timeout=5).stdout.strip()
-            ttys = subprocess.run([tmux, "list-clients", "-t", session, "-F", "#{client_tty}"],
-                                  capture_output=True, text=True, timeout=5).stdout.split()
-        except (OSError, subprocess.SubprocessError):
-            ttys = []
-        for t in ttys:
-            pane = pane_for_tty(panes, t)
+def tmux(*args):
+    """Run `tmux ...`; stdout, or '' on any failure."""
+    try:
+        return subprocess.run([first_bin(TMUX_BINS, "tmux")] + list(args),
+                              capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def pane_for_tmux(panes, target):
+    """The WezTerm pane showing tmux pane `target`: the one on the tty of a
+    client attached to its tmux session."""
+    session = tmux("display-message", "-p", "-t", target, "#{session_name}").strip()
+    if not session:
+        return None
+    for t in tmux("list-clients", "-t", session, "-F", "#{client_tty}").split():
+        pane = pane_for_tty(panes, t)
+        if pane is not None:
+            return pane
+    return None
+
+
+def bare_title(title):
+    """A terminal title without the status glyph Claude puts before it ('✳ name')."""
+    return re.sub(r"^\W+", "", title or "").strip()
+
+
+def job_name(job_dir):
+    """The name Claude gave the background session in `job_dir`, '' until it has one."""
+    state = load_json(os.path.join(job_dir, "state.json"), {})
+    name = state.get("name") if isinstance(state, dict) else None
+    return name if isinstance(name, str) else ""
+
+
+def pane_titled(panes, name):
+    """The WezTerm pane whose title, or whose tmux pane's title, is `name`."""
+    if not name:
+        return None
+    for p in panes:
+        if bare_title(p.get("title")) == name:
+            return p.get("pane_id")
+    for line in tmux("list-panes", "-a", "-F", "#{pane_id}\t#{pane_title}").splitlines():
+        target, _, title = line.partition("\t")
+        if bare_title(title) == name:
+            pane = pane_for_tmux(panes, target)
             if pane is not None:
                 return pane
-    # A background job's $WEZTERM_PANE is where Claude's daemon started, and one
-    # beside a stale socket numbers a pane of the old GUI: use the focused pane.
-    trusted = not env.get("CLAUDE_JOB_DIR") and not stale_socket(env)
-    if trusted and env.get("WEZTERM_PANE") and pane_info(panes, env["WEZTERM_PANE"]):
+    return None
+
+
+def claude_pane(panes, env=None):
+    """The WezTerm pane showing this Claude session (hooks run in its environment),
+    or None when that cannot be told: a guess docks the panel in another tab and
+    points that tab's panel at this session."""
+    env = os.environ if env is None else env
+    if env.get("CLAUDE_JOB_DIR"):
+        # A background session runs in Claude's daemon, away from any terminal, with
+        # the daemon's $WEZTERM_PANE and $TMUX_PANE. The agent view showing it
+        # titles its terminal with the session's name.
+        return pane_titled(panes, job_name(env["CLAUDE_JOB_DIR"]))
+    if env.get("TMUX_PANE"):
+        # Inside tmux, $WEZTERM_PANE is the pane that started the tmux server.
+        return pane_for_tmux(panes, env["TMUX_PANE"])
+    # Beside a stale socket, $WEZTERM_PANE numbers a pane of the old GUI.
+    if not stale_socket(env) and env.get("WEZTERM_PANE") and pane_info(panes, env["WEZTERM_PANE"]):
         return int(env["WEZTERM_PANE"])
-    try:
-        clients = json.loads(wez("list-clients", "--format", "json") or "[]")
-        return clients[0].get("focused_pane_id") if clients else None
-    except (ValueError, AttributeError):
-        return None
+    return None
 
 
 def placement(cols, mode):

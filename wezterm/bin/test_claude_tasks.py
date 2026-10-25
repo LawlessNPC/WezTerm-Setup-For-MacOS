@@ -354,18 +354,95 @@ class FindingTheClaudePane(unittest.TestCase):
     def test_without_tmux_wezterm_pane_is_used_when_it_exists(self):
         self.assertEqual(ct.claude_pane(self.PANES, {"WEZTERM_PANE": "2"}), 2)
 
-    def test_a_background_job_docks_beside_the_focused_pane(self):
-        # Claude's daemon hosts background jobs: their $WEZTERM_PANE is the pane
-        # the daemon started in, not the one the job is being watched from.
-        env = {"CLAUDE_JOB_DIR": "/Users/me/.claude/jobs/abc", "WEZTERM_PANE": "0"}
-        with mock.patch.object(ct, "wez", return_value='[{"focused_pane_id": 2}]'):
-            self.assertEqual(ct.claude_pane(self.PANES, env), 2)
+    def test_inside_tmux_the_pane_comes_from_the_attached_client(self):
+        with mock.patch.object(ct, "tmux", side_effect=fake_tmux):
+            self.assertEqual(ct.claude_pane(self.PANES, {"TMUX_PANE": "%1", "WEZTERM_PANE": "0"}), 2)
+
+    def test_inside_tmux_wezterm_pane_is_never_trusted(self):
+        # It names the pane that started the tmux server: always the first tab.
+        with mock.patch.object(ct, "tmux", return_value=""):
+            self.assertIsNone(ct.claude_pane(self.PANES, {"TMUX_PANE": "%1", "WEZTERM_PANE": "0"}))
 
     def test_a_pane_id_from_a_restarted_wezterm_is_not_trusted(self):
         env = {"WEZTERM_UNIX_SOCKET": "/tmp/claude-tasks-test-gone/gui-sock-1", "WEZTERM_PANE": "0"}
-        with mock.patch.object(ct, "wez", return_value='[{"focused_pane_id": 2}]'):
-            self.assertEqual(ct.claude_pane(self.PANES, env), 2)
+        with mock.patch.object(ct, "wez", return_value=FOCUSED_2):
+            self.assertIsNone(ct.claude_pane(self.PANES, env))
 
+
+FOCUSED_2 = '[{"focused_pane_id": 2}]'
+
+
+def fake_tmux(*args):
+    """tmux with two sessions, each attached from its own WezTerm tab: session 0
+    on /dev/ttys000 (pane 0), session 1 on /dev/ttys005 (pane 2)."""
+    if args[0] == "display-message":
+        return {"%0": "0\n", "%1": "1\n"}.get(args[args.index("-t") + 1], "")
+    if args[0] == "list-clients":
+        return {"0": "/dev/ttys000\n", "1": "/dev/ttys005\n"}.get(args[args.index("-t") + 1], "")
+    if args[0] == "list-panes":
+        return "%0\t✳ Subtask text wrapping\n%1\t⠐ pokemon-gba-flipper-rom\n"
+    return ""
+
+
+class FindingABackgroundJobsPane(unittest.TestCase):
+    """A background session runs in Claude's daemon, away from any terminal: its
+    hooks carry the daemon's $WEZTERM_PANE (and maybe $TMUX_PANE), which name
+    wherever the daemon started. The agent view showing the session titles its
+    terminal with the session's name."""
+
+    PANES = FindingTheClaudePane.PANES
+
+    def setUp(self):
+        self.job = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.job)
+        self.env = {"CLAUDE_JOB_DIR": self.job, "WEZTERM_PANE": "0", "TMUX_PANE": "%0"}
+
+    def name(self, name):
+        with open(os.path.join(self.job, "state.json"), "w") as f:
+            json.dump({"name": name, "sessionId": "72354b36"}, f)
+
+    def test_it_docks_beside_the_tmux_pane_titled_with_its_name(self):
+        self.name("pokemon-gba-flipper-rom")
+        with mock.patch.object(ct, "tmux", side_effect=fake_tmux):
+            self.assertEqual(ct.claude_pane(self.PANES, self.env), 2)
+
+    def test_it_docks_beside_a_wezterm_pane_titled_with_its_name(self):
+        self.name("pokemon-gba-flipper-rom")
+        panes = [dict(self.PANES[0], title="claude-tasks strip"),
+                 dict(self.PANES[1], title="✳ pokemon-gba-flipper-rom")]
+        with mock.patch.object(ct, "tmux", return_value=""):
+            self.assertEqual(ct.claude_pane(panes, self.env), 2)
+
+    def test_it_docks_nowhere_when_no_terminal_shows_it(self):
+        # Not beside the focused pane: that is whichever tab the owner is reading.
+        self.name("remarkable-sleep-screen-image")
+        with mock.patch.object(ct, "tmux", side_effect=fake_tmux), \
+                mock.patch.object(ct, "wez", return_value=FOCUSED_2):
+            self.assertIsNone(ct.claude_pane(self.PANES, self.env))
+
+    def test_a_session_without_a_name_yet_docks_nowhere(self):
+        # The agent view keeps a blank session claimed for the next prompt.
+        with mock.patch.object(ct, "tmux", side_effect=fake_tmux), \
+                mock.patch.object(ct, "wez", return_value=FOCUSED_2):
+            self.assertIsNone(ct.claude_pane(self.PANES, self.env))
+
+    def test_its_hook_leaves_another_tabs_panel_alone(self):
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state)
+        panes = self.PANES + [{"pane_id": 6, "tab_id": 0, "tty_name": "/dev/ttys009"}]
+        with mock.patch.object(ct, "STATE_DIR", state):
+            ct.register(0, 6, 0, "momentum", "strip")
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                    mock.patch.object(ct, "wez_panes", return_value=panes), \
+                    mock.patch.object(ct, "tmux", side_effect=fake_tmux), \
+                    mock.patch.object(ct, "wez", return_value=FOCUSED_2), \
+                    mock.patch.object(ct, "open_panel") as opened:
+                ct.dock({"session_id": "72354b36"}, "auto")
+            self.assertEqual(ct.load_json(ct.tab_state(0), {})["session"], "momentum")
+            opened.assert_not_called()
+
+
+class Arguments(unittest.TestCase):
     def test_parse_args(self):
         self.assertEqual(ct.parse_args([]), {"mode": "manual", "pane": None, "session": None})
         self.assertEqual(ct.parse_args(["--strip", "--pane", "7", "--session", "abc"]),
