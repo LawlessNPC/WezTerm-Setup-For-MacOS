@@ -333,6 +333,7 @@ class Board:
         self.dismissed = set(load_json(DISMISSED, []))
         self.history = {}   # key -> [(end_time, seconds)]
         self.seen_done = set()
+        self.listed = {}    # id -> the task as the last scan listed it
 
     def transcript(self, project, session):
         path = os.path.join(PROJECTS, project, session + ".jsonl")
@@ -435,6 +436,19 @@ class Board:
                     continue
             tasks.append(task)
 
+        # A listed task whose file has gone (a foreground command's goes once it
+        # returns) stays just long enough to return to its ball. A stale one
+        # goes at once, as when it is cleared.
+        found = {t["id"] for t in tasks}
+        for tid, was in self.listed.items():
+            if tid in found or was["state"] == "stale":
+                continue
+            gone = dict(was)
+            if gone["state"] == "running":
+                gone.update(state="done", end=now, pids=[])
+            gone.setdefault("leaves", min(leaves_at(gone), now + RECALL_LEAD))
+            tasks.append(gone)
+
         shown = []
         for t in tasks:
             if t["state"] == "running":
@@ -442,9 +456,10 @@ class Board:
             elif t["state"] == "stale":
                 if t["id"] not in self.dismissed and now - t["end"] < RECENT:
                     shown.append(t)
-            elif now - (t["end"] or 0) < DONE_FADE:
+            elif now < leaves_at(t):
                 shown.append(t)
         shown.sort(key=lambda t: (t["state"] != "running", -t["start"]))
+        self.listed = {t["id"]: t for t in shown}
         return shown
 
     def estimate(self, command):
@@ -640,14 +655,36 @@ def sprite_frame(task, now):
     return int(now / SPRITE_TICK) % 2 if task["state"] == "running" else 0
 
 
+def leaves_at(task):
+    """When a finished task's row leaves the list: DONE_FADE after it ended, or
+    sooner once its task file has gone (a foreground command's goes as soon as
+    it returns)."""
+    return task.get("leaves") or (task["end"] or 0) + DONE_FADE
+
+
 def recall_step(task, now):
     """The step of RECALL to draw, or None while the task isn't leaving. Only
     finished tasks fade out (a stale one stays until cleared), and the last
     step holds until the list drops the row."""
     if task["state"] not in ("done", "failed", "killed") or not task.get("end"):
         return None
-    t = now - (task["end"] + DONE_FADE - RECALL_LEAD)
+    t = now - (leaves_at(task) - RECALL_LEAD)
     return None if t < 0 else min(int(t / SPRITE_TICK), len(RECALL) - 1)
+
+
+def in_view(tasks, n, now):
+    """The first n tasks, except that a task returning to its ball takes the
+    last slot it can, rather than leave unseen below them: the oldest task is
+    the one leaving, and it is listed last."""
+    keep = list(range(min(n, len(tasks))))
+    for i in range(len(keep), len(tasks)):
+        if recall_step(tasks[i], now) is None:
+            continue
+        for j in reversed(range(len(keep))):
+            if recall_step(tasks[keep[j]], now) is None:
+                keep[j] = i
+                break
+    return [tasks[i] for i in sorted(keep)]
 
 
 def sprite_scale(cell_w, cell_h):
@@ -1167,7 +1204,7 @@ def render_strip(tasks, width, height, frame, scope="", art=None):
     lines, sprites = [header(tasks, width, scope, now)], []
     if not tasks:
         lines.append(DIM + clip(" nothing running · this widens into the full panel while tasks run", width) + RESET)
-    for t in tasks[: max(0, (height - 1) // (2 if gutter else 1))]:
+    for t in in_view(tasks, max(0, (height - 1) // (2 if gutter else 1)), now):
         st = t["state"]
         if gutter:
             sprites.append((len(lines) + 1, art.escape(t, now)))

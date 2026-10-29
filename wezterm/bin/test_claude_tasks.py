@@ -765,6 +765,18 @@ class SpriteLayout(unittest.TestCase):
             self.assertEqual(rows[y][:ct.GUTTER], " " * ct.GUTTER)
         self.assertIn("proj · Explore · since", rows[3])
 
+    def test_a_leaving_task_takes_the_strips_last_slot(self):
+        """The oldest task is the one leaving, and it sits below the strip's two
+        slots; it comes up for its return to the ball rather than go unseen."""
+        leaving = task("c3", "gamma", "done")
+        leaving["end"] = time.time() - (ct.DONE_FADE - 1)
+        tasks = [task("a1", "alpha"), task("b2", "beta"), leaving]
+        _, sprites, _ = painted(ct.render_strip, tasks, 80, ct.STRIP_ROWS, 0, "", FakeArt())
+        self.assertEqual(sprites, {2: "<sprite a1>", 4: "<sprite c3>"})
+        leaving["end"] = time.time() - 10  # not leaving yet: it stays below
+        _, sprites, _ = painted(ct.render_strip, tasks, 80, ct.STRIP_ROWS, 0, "", FakeArt())
+        self.assertEqual(sprites, {2: "<sprite a1>", 4: "<sprite b2>"})
+
     def test_the_strip_without_sprites_lists_one_task_per_line(self):
         tasks = [task("t%d" % i, "task %d" % i) for i in range(6)]
         rows, sprites, _ = painted(ct.render_strip, tasks, 80, ct.STRIP_ROWS, 0, "")
@@ -868,6 +880,77 @@ class Recall(unittest.TestCase):
     def test_only_finished_tasks_leave(self):
         self.assertIsNone(self.at("stale", ct.DONE_FADE))   # stays until cleared
         self.assertIsNone(ct.recall_step({"state": "running", "end": None}, self.END))
+
+    def test_a_row_leaving_early_plays_it_before_it_goes(self):
+        early = {"state": "done", "end": self.END, "leaves": self.END + 5}
+        self.assertIsNone(ct.recall_step(early, self.END + 5 - ct.RECALL_LEAD - 0.01))
+        self.assertEqual(ct.recall_step(early, self.END + 5 - ct.RECALL_LEAD + 0.01), 0)
+
+
+class GoneTaskFiles(unittest.TestCase):
+    """A foreground command's task file goes once it returns, and any listed
+    task's file can go; its row still returns to its ball before it leaves."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.tasks = os.path.join(self.root, "tmp", "-proj", "s1", "tasks")
+        os.makedirs(self.tasks)
+        os.makedirs(os.path.join(self.root, "projects", "-proj"))
+        with open(os.path.join(self.root, "projects", "-proj", "s1.jsonl"), "w") as f:
+            for r in ({"message": {"content": [{"type": "tool_use", "id": "tu1", "name": "Bash",
+                                                "input": {"command": "make check", "description": "Run the gate",
+                                                          "run_in_background": True}}]}},
+                      {"message": {"content": [{"type": "tool_result", "tool_use_id": "tu1",
+                                                "content": "Command running in background with ID: bfg1."}]}}):
+                f.write(json.dumps(r) + "\n")
+        for name, value in (("TASK_GLOB", os.path.join(self.root, "tmp", "*", "*", "tasks", "*.output")),
+                            ("PROJECTS", os.path.join(self.root, "projects")),
+                            ("DISMISSED", os.path.join(self.root, "dismissed.json"))):
+            patcher = mock.patch.object(ct, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.path = os.path.join(self.tasks, "bfg1.output")
+
+    def scan(self, board, held=(), at=None):
+        holders = {os.path.realpath(p): [123] for p in held}
+        with mock.patch.object(ct, "holders", return_value=holders):
+            if at is None:
+                return board.scan()
+            with mock.patch.object(ct.time, "time", return_value=at):
+                return board.scan()
+
+    def test_a_running_row_whose_file_goes_returns_to_its_ball_then_leaves(self):
+        with open(self.path, "w") as f:
+            f.write("checking…\n")
+        board = ct.Board()
+        self.assertEqual([t["state"] for t in self.scan(board, held=[self.path])], ["running"])
+        os.remove(self.path)
+        now = time.time()
+        (gone,) = self.scan(board, at=now)
+        self.assertEqual((gone["id"], gone["state"], gone["description"]), ("bfg1", "done", "Run the gate"))
+        self.assertEqual(ct.recall_step(gone, now), 0)              # straight back to its ball
+        self.assertEqual(len(self.scan(board, at=now + ct.RECALL_LEAD - 0.1)), 1)  # still playing
+        self.assertEqual(self.scan(board, at=now + ct.RECALL_LEAD + 0.1), [])
+
+    def test_a_finished_row_whose_file_goes_leaves_the_same_way(self):
+        with open(self.path, "w") as f:
+            f.write("ok\n[exited with code 0]\n")
+        board = ct.Board()
+        self.assertEqual([t["state"] for t in self.scan(board)], ["done"])
+        os.remove(self.path)
+        now = time.time()
+        (gone,) = self.scan(board, at=now)
+        self.assertEqual(ct.recall_step(gone, now), 0)
+        self.assertEqual(self.scan(board, at=now + ct.RECALL_LEAD + 0.1), [])
+
+    def test_a_cleared_stale_row_just_goes(self):
+        with open(self.path, "w") as f:
+            f.write("checking…\n")
+        board = ct.Board()
+        self.assertEqual([t["state"] for t in self.scan(board)], ["stale"])
+        os.remove(self.path)
+        self.assertEqual(self.scan(board), [])
 
     def test_the_animation_fits_before_the_row_goes(self):
         self.assertLess(len(ct.RECALL) * ct.SPRITE_TICK, ct.RECALL_LEAD)
