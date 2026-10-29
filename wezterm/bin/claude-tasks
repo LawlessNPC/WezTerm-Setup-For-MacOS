@@ -7,15 +7,17 @@ One panel per WezTerm tab, docked to the Claude pane, in two shapes:
   columns, keeps opening), and
 - a full panel while tasks run: on the right when Claude still keeps
   MIN_CLAUDE_COLS columns, otherwise taller along the bottom.
-It switches shape on its own, focuses on the Claude session that opened it
-(`a` toggles every session), and closes when the Claude pane closes.
+It switches shape on its own by moving its one pane (a pane that closes after
+a new split hands its rows to that split, not back to Claude), focuses on the
+Claude session that opened it (`a` toggles every session), and closes when the
+Claude pane closes.
 
     claude-tasks                   the panel, all sessions; stays until q
     claude-tasks --manual --pane N the same, docked to pane N (Cmd+Shift+B)
-    claude-tasks --strip --pane N  the idle strip; widens into --auto when a
-                                   task starts
-    claude-tasks --auto --pane N   the full panel; shrinks back to the strip
-                                   once nothing is running
+    claude-tasks --strip --pane N  the idle strip; its pane widens into the
+                                   full panel when a task starts
+    claude-tasks --auto --pane N   the full panel; its pane shrinks back to
+                                   the strip once nothing is running
     claude-tasks --session-start   SessionStart hook: opens the strip beside
                                    the Claude pane if its tab has no panel
     claude-tasks --hook            PostToolUse hook: opens the full panel when
@@ -103,7 +105,6 @@ PANEL_COLS = 60          # the full panel's width on the right
 PANEL_ROWS = 14          # the full panel's height when the window is too narrow
 MIN_CLAUDE_COLS = 150    # Claude's diff panel needs >= 144 columns; keep a margin
 MIN_CLAUDE_ROWS = 10     # rows a panel along the bottom always leaves Claude
-TRIM_WINDOW = 30.0       # seconds a new panel hands back rows it inherited from the one it replaced
 
 GUTTER = 5               # columns left of each task for its sprite (2 rows tall)
 ICON_PX = 32             # a party icon is 32x32 frames, stacked
@@ -1199,13 +1200,11 @@ def panel(mode="manual", claude=None, session=None):
         tab = info.get("tab_id") if info else None
         if tab is not None and me:
             register(tab, me, claude, session, mode)
-    title = "claude-tasks" if mode != "strip" else "claude-tasks strip"
-    sys.stdout.write("\x1b]0;%s\x07\x1b[?25l\x1b[?1049h" % title)
+    sys.stdout.write("\x1b]0;%s\x07\x1b[?25l\x1b[?1049h" % title_for(mode))
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setcbreak(fd)
     board, sel, frame, scans = Board(), 0, 0, 0
-    started = time.time()
     art = Sprites() if sprites_enabled() else None
     show_all = not session
     idle_since, confirm, banner = None, None, ""
@@ -1275,26 +1274,21 @@ def panel(mode="manual", claude=None, session=None):
                 st = load_json(tab_state(tab), {})
                 if str(st.get("pane")) == str(me) and st.get("session") and st.get("session") != session:
                     session, show_all = st.get("session"), False
-            if scans % PANE_CHECK == 0:
-                panes = wez_panes()
-                if not docked(panes, claude, me):
-                    return  # the Claude pane closed, or WezTerm never placed this panel
-                if mode != "manual" and me and time.time() - started < TRIM_WINDOW:
-                    extra = excess_rows(panes, me, claude, STRIP_ROWS if mode == "strip" else PANEL_ROWS)
-                    if extra:
-                        wez("adjust-pane-size", "--pane-id", str(me), "--amount", str(extra), "Down")
+            if scans % PANE_CHECK == 0 and not docked(wez_panes(), claude, me):
+                return  # the Claude pane closed, or WezTerm never placed this panel
             running = busy(in_scope(everything, session))
             if mode == "strip" and running:
-                if open_panel(claude, "auto", session):
-                    return  # the full panel took over
+                if reshape(claude, me, "auto", session):
+                    mode, sel, idle_since = "auto", 0, None
+                    sys.stdout.write("\x1b]0;%s\x07" % title_for(mode))
             elif mode == "auto":
                 if running:
                     idle_since = None
                 elif idle_since is None:
                     idle_since = time.time()
-                elif time.time() - idle_since >= GRACE:
-                    open_panel(claude, "strip", session)
-                    return
+                elif time.time() - idle_since >= GRACE and reshape(claude, me, "strip", session):
+                    mode = "strip"
+                    sys.stdout.write("\x1b]0;%s\x07" % title_for(mode))
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         sys.stdout.write("\x1b[?1049l\x1b[?25h")
@@ -1370,15 +1364,10 @@ def docked(panes, claude, me):
     return pane_info(panes, claude) is not None and (not me or pane_info(panes, me) is not None)
 
 
-def excess_rows(panes, me, claude, target):
-    """Rows a panel stacked under the Claude pane holds beyond `target`. When a
-    panel changes shape, WezTerm gives the closing pane's rows to the new panel
-    rather than back to Claude."""
-    mine, theirs = pane_info(panes, me), pane_info(panes, claude)
-    if (not mine or not theirs or mine.get("left_col") != theirs.get("left_col")
-            or mine.get("top_row", 0) <= theirs.get("top_row", 0)):
-        return 0
-    return max(0, (mine.get("size") or {}).get("rows", 0) - target)
+def stacked_under(mine, theirs):
+    """Whether pane `mine` sits below pane `theirs` in the same column of splits."""
+    return (mine.get("left_col") == theirs.get("left_col")
+            and mine.get("top_row", 0) > theirs.get("top_row", 0))
 
 
 def pane_for_tty(panes, tty_name):
@@ -1503,6 +1492,35 @@ def live_panel(panes, tab):
     st = load_json(tab_state(tab), {})
     info = pane_info(panes, st.get("pane"))
     return st if info and info.get("tab_id") == tab else None
+
+
+def title_for(mode):
+    return "claude-tasks" if mode != "strip" else "claude-tasks strip"
+
+
+def reshape(claude, me, mode, session, panes=None):
+    """Move this panel's own pane (`me`) to where `mode` goes beside the Claude
+    pane, sized for that shape; True once WezTerm has. The pane leaves its old
+    slot first, so Claude takes those rows back. (Splitting a new panel off
+    Claude and closing this one handed the closing pane's rows to the new panel
+    instead: each change of shape left Claude shorter.)"""
+    panes = wez_panes() if panes is None else panes
+    info, mine = pane_info(panes, claude), pane_info(panes, me)
+    if not info or not mine:
+        return False
+    size = dict(info.get("size") or {})
+    if stacked_under(mine, info):  # rows the move returns to Claude before it splits
+        size["rows"] = size.get("rows", 0) + (mine.get("size") or {}).get("rows", 0) + 1
+    direction, cells = placement(size.get("cols", 0), mode)
+    if not room_for({"size": size}, direction, cells):
+        return False
+    moved = wez("split-pane", "--pane-id", str(claude), "--" + direction, "--cells", str(cells),
+                "--move-pane-id", str(me)).strip()
+    if not moved.isdigit():
+        return False
+    register(info.get("tab_id"), me, claude, session, mode)
+    wez("activate-pane", "--pane-id", str(claude))
+    return True
 
 
 def open_panel(claude, mode, session, panes=None):

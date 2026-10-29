@@ -206,8 +206,24 @@ class Placement(unittest.TestCase):
 
 class PanelLayout(unittest.TestCase):
     """WezTerm starts a split's program before it finds there is no room, and the
-    program lives on with no pane; and when a panel changes shape, the closing
-    pane's rows go to the new panel instead of back to Claude."""
+    program lives on with no pane; and when a pane closes, its rows go to the
+    other pane of its split, so a panel that changed shape by closing after a new
+    split handed its rows to the new panel, never back to Claude. A panel now
+    changes shape by moving its own pane: Claude takes the old slot back first."""
+
+    STACKED = [{"pane_id": 0, "tab_id": 0, "left_col": 0, "top_row": 0,
+                "size": {"rows": 29, "cols": 146}},
+               {"pane_id": 4, "tab_id": 0, "left_col": 0, "top_row": 30,
+                "size": {"rows": 5, "cols": 146}}]
+
+    def reshape(self, panes, mode, moved="4\n"):
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state)
+        with mock.patch.object(ct, "STATE_DIR", state), \
+                mock.patch.object(ct, "wez", return_value=moved) as wez:
+            ok = ct.reshape(0, "4", mode, "s1", panes=panes)
+        calls = [c.args for c in wez.call_args_list]
+        return ok, calls, ct.load_json(os.path.join(state, "tab-0.json"), {})
 
     def test_a_split_needs_room_to_leave_claude_its_minimum(self):
         self.assertTrue(ct.room_for({"size": {"rows": 34, "cols": 140}}, "bottom", ct.PANEL_ROWS))
@@ -229,15 +245,53 @@ class PanelLayout(unittest.TestCase):
         self.assertFalse(ct.docked(panes, 0, "7"))  # WezTerm never placed it
         self.assertFalse(ct.docked(panes, 5, "3"))  # the Claude pane closed
 
-    def test_a_bottom_panel_hands_back_the_rows_it_inherited(self):
-        panes = [{"pane_id": 0, "left_col": 0, "top_row": 0, "size": {"rows": 13}},
-                 {"pane_id": 3, "left_col": 0, "top_row": 14, "size": {"rows": 20}}]
-        self.assertEqual(ct.excess_rows(panes, "3", 0, ct.STRIP_ROWS), 15)
+    def test_a_shape_change_moves_the_panels_own_pane(self):
+        ok, calls, state = self.reshape(self.STACKED, "auto")
+        self.assertTrue(ok)
+        self.assertEqual(calls[0], ("split-pane", "--pane-id", "0", "--bottom", "--cells",
+                                    str(ct.PANEL_ROWS), "--move-pane-id", "4"))
+        self.assertEqual(calls[1], ("activate-pane", "--pane-id", "0"))
+        self.assertEqual((state.get("pane"), state.get("mode")), (4, "auto"))
 
-    def test_a_panel_beside_claude_keeps_its_rows(self):
-        panes = [{"pane_id": 0, "left_col": 0, "top_row": 0, "size": {"rows": 34}},
-                 {"pane_id": 3, "left_col": 141, "top_row": 0, "size": {"rows": 34}}]
-        self.assertEqual(ct.excess_rows(panes, "3", 0, ct.PANEL_ROWS), 0)
+    def test_the_move_counts_the_rows_the_pane_gives_back(self):
+        # What the old way left behind: Claude down to 8 rows under a 26-row strip.
+        # Moving the strip returns its rows first, so the full panel still fits.
+        squeezed = [dict(self.STACKED[0], size={"rows": 8, "cols": 146}),
+                    dict(self.STACKED[1], top_row=9, size={"rows": 26, "cols": 146})]
+        ok, calls, _ = self.reshape(squeezed, "auto")
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][3:6], ("--bottom", "--cells", str(ct.PANEL_ROWS)))
+
+    def test_a_wide_window_puts_the_full_panel_on_the_right(self):
+        wide = [dict(self.STACKED[0], size={"rows": 29, "cols": 300}),
+                dict(self.STACKED[1], size={"rows": 5, "cols": 300})]
+        ok, calls, _ = self.reshape(wide, "auto")
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][3:6], ("--right", "--cells", str(ct.PANEL_COLS)))
+
+    def test_a_panel_beside_claude_moves_back_under_it(self):
+        beside = [{"pane_id": 0, "tab_id": 0, "left_col": 0, "top_row": 0,
+                   "size": {"rows": 35, "cols": 239}},
+                  {"pane_id": 4, "tab_id": 0, "left_col": 240, "top_row": 0,
+                   "size": {"rows": 35, "cols": 60}}]
+        ok, calls, state = self.reshape(beside, "strip")
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][3:8], ("--bottom", "--cells", str(ct.STRIP_ROWS),
+                                         "--move-pane-id", "4"))
+        self.assertEqual(state.get("mode"), "strip")
+
+    def test_without_room_nothing_moves(self):
+        tiny = [dict(self.STACKED[0], size={"rows": 10, "cols": 146}),
+                dict(self.STACKED[1], top_row=11)]  # 16 rows in all: 14 + 1 would leave Claude 1
+        ok, calls, _ = self.reshape(tiny, "auto")
+        self.assertFalse(ok)
+        self.assertEqual(calls, [])
+
+    def test_a_move_wezterm_refused_changes_nothing(self):
+        ok, calls, state = self.reshape(self.STACKED, "auto", moved="")
+        self.assertFalse(ok)
+        self.assertEqual(len(calls), 1)  # no activate-pane after a refusal
+        self.assertEqual(state, {})
 
 
 class Labels(unittest.TestCase):
